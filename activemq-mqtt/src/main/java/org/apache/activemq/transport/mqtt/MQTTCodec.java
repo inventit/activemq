@@ -24,6 +24,8 @@ import org.fusesource.hawtbuf.DataByteArrayInputStream;
 import org.fusesource.hawtbuf.DataByteArrayOutputStream;
 import org.fusesource.mqtt.codec.*;
 
+//Changed something
+
 public class MQTTCodec {
 
     TcpTransport transport;
