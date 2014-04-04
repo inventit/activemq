@@ -234,6 +234,18 @@ public class MQTTProtocolConverter {
         connectionInfo.setUserName(userName);
         connectionInfo.setPassword(passswd);
         connectionInfo.setTransportContext(mqttTransport.getPeerCertificates());
+		if (clientId.startsWith("dev:") == false) {
+			Throwable exception = new SecurityException("Illegal Client type. clientId:"+clientId);
+			//let the client know
+			CONNACK ack = new CONNACK();
+			ack.code(CONNACK.Code.CONNECTION_REFUSED_NOT_AUTHORIZED);
+			try {
+				getMQTTTransport().sendToMQTT(ack.encode());
+			} catch (IOException e) {
+			}
+			getMQTTTransport().onException(IOExceptionSupport.create(exception));
+			return;
+		}
 
         sendToActiveMQ(connectionInfo, new ResponseHandler() {
             @Override
@@ -244,7 +256,11 @@ public class MQTTProtocolConverter {
                     Throwable exception = ((ExceptionResponse) response).getException();
                     //let the client know
                     CONNACK ack = new CONNACK();
-                    ack.code(CONNACK.Code.CONNECTION_REFUSED_SERVER_UNAVAILABLE);
+					if (exception instanceof SecurityException) {
+						ack.code(CONNACK.Code.CONNECTION_REFUSED_NOT_AUTHORIZED);
+					} else {
+						ack.code(CONNACK.Code.CONNECTION_REFUSED_SERVER_UNAVAILABLE);
+					}
                     getMQTTTransport().sendToMQTT(ack.encode());
                     getMQTTTransport().onException(IOExceptionSupport.create(exception));
                     return;
@@ -262,7 +278,11 @@ public class MQTTProtocolConverter {
                             // If the connection attempt fails we close the socket.
                             Throwable exception = ((ExceptionResponse) response).getException();
                             CONNACK ack = new CONNACK();
-                            ack.code(CONNACK.Code.CONNECTION_REFUSED_BAD_USERNAME_OR_PASSWORD);
+							if (exception instanceof SecurityException) {
+								ack.code(CONNACK.Code.CONNECTION_REFUSED_NOT_AUTHORIZED);
+							} else {
+								ack.code(CONNACK.Code.CONNECTION_REFUSED_SERVER_UNAVAILABLE);
+							}
                             getMQTTTransport().sendToMQTT(ack.encode());
                             getMQTTTransport().onException(IOExceptionSupport.create(exception));
                             return;
