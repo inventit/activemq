@@ -45,7 +45,9 @@
 <tbody>
 <jms:forEachMessage queueBrowser="${requestContext.queueBrowser.browser}" var="row">
 <tr>
-<td><a href="message.jsp?id=${row.JMSMessageID}&JMSDestination=<c:out value="${requestContext.queueBrowser.JMSDestination}" />" 
+<td><a href="<c:url value="message.jsp">
+                 <c:param name="id" value="${row.JMSMessageID}" />
+                 <c:param name="JMSDestination" value="${requestContext.queueBrowser.JMSDestination}"/></c:url>"
     title="${row.properties}">${row.JMSMessageID}</a></td>
 <td><c:out value="${row.JMSCorrelationID}"/></td>
 <td><jms:persistent message="${row}"/></td>
@@ -55,7 +57,35 @@
 <td><jms:formatTimestamp timestamp="${row.JMSTimestamp}"/></td>
 <td><c:out value="${row.JMSType}"/></td>
 <td>
-    <a href="deleteMessage.action?JMSDestination=<c:out value="${requestContext.queueBrowser.JMSDestination}"/>&messageId=${row.JMSMessageID}&secret=<c:out value='${sessionScope["secret"]}'/>">Delete</a>
+    <a href="<c:url value="deleteMessage.action">
+                 <c:param name="JMSDestination" value="${requestContext.queueBrowser.JMSDestination}"/>
+                 <c:param name="messageId" value="${row.JMSMessageID}"/>
+                 <c:param name="secret" value='${sessionScope["secret"]}'/></c:url>"
+       onclick="return confirm('Are you sure you want to delete this message?')"
+    >Delete</a>
+	
+    <c:set var="queueName" value="${requestContext.queueBrowser.JMSDestination}"/>
+    <!-- <c:set var="queueName" value="${fn:replace(queueName, 'queue://', '')}" /> -->
+    <c:set var="queueNameSubStr" value="${fn:substring(queueName, 0, 4)}" />
+    
+    <c:if test="${queueNameSubStr eq 'DLQ.' || queueNameSubStr eq 'DLT.'}">
+        <c:if test="${queueNameSubStr eq 'DLQ.'}">
+            <c:set var="moveToQueue" value="${fn:replace(queueName, 'DLQ.', '')}" />
+        </c:if>
+        <c:if test="${queueNameSubStr eq 'DLT.'}">
+            <c:set var="moveToQueue" value="${fn:replace(queueName, 'DLT.', '')}" />
+        </c:if>
+        <a href="<c:url value="moveMessage.action">
+                     <c:param name="destination" value="${moveToQueue}" />
+                     <c:param name="JMSDestination" value="${requestContext.queueBrowser.JMSDestination}" />
+                     <c:param name="messageId" value="${row.JMSMessageID}" />
+                     <c:param name="JMSDestinationType" value="queue" />
+                     <c:param name="secret" value='${sessionScope["secret"]}' />
+                 </c:url>"
+                 onclick="return confirm('Are you sure you want to retry this message on queue://<c:out value="${moveToQueue}"/>?')"
+                 title="Move to <c:out value="${moveToQueue}" /> to attempt reprocessing"
+        >Retry</a>
+    </c:if>
 </td>
 </tr>
 </jms:forEachMessage>
@@ -70,4 +100,4 @@
 
 </body>
 </html>
-	
+

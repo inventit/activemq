@@ -69,6 +69,7 @@ import org.apache.activemq.store.kahadb.data.KahaRollbackCommand;
 import org.apache.activemq.store.kahadb.data.KahaSubscriptionCommand;
 import org.apache.activemq.store.kahadb.data.KahaTraceCommand;
 import org.apache.activemq.store.kahadb.data.KahaTransactionInfo;
+import org.apache.activemq.store.kahadb.data.KahaUpdateMessageCommand;
 import org.apache.activemq.store.kahadb.disk.index.BTreeIndex;
 import org.apache.activemq.store.kahadb.disk.index.BTreeVisitor;
 import org.apache.activemq.store.kahadb.disk.index.ListIndex;
@@ -224,6 +225,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
 
     protected boolean deleteAllMessages;
     protected File directory = DEFAULT_DIRECTORY;
+    protected File indexDirectory = null;
     protected Thread checkpointThread;
     protected boolean enableJournalDiskSyncs=true;
     protected boolean archiveDataLogs;
@@ -553,6 +555,18 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
         synchronized (inflightTransactions) {
             if (!inflightTransactions.isEmpty()) {
                 for (Entry<TransactionId, List<Operation>> entry : inflightTransactions.entrySet()) {
+                    TranInfo info = new TranInfo();
+                    info.id = entry.getKey();
+                    for (Operation operation : entry.getValue()) {
+                        info.track(operation);
+                    }
+                    infos.add(info);
+                }
+            }
+        }
+        synchronized (preparedTransactions) {
+            if (!preparedTransactions.isEmpty()) {
+                for (Entry<TransactionId, List<Operation>> entry : preparedTransactions.entrySet()) {
                     TranInfo info = new TranInfo();
                     info.id = entry.getKey();
                     for (Operation operation : entry.getValue()) {
@@ -1100,6 +1114,11 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
             public void visit(KahaTraceCommand command) {
                 processLocation(location);
             }
+
+            @Override
+            public void visit(KahaUpdateMessageCommand command) throws IOException {
+                process(command, location);
+            }
         });
     }
 
@@ -1114,12 +1133,27 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
                 pageFile.tx().execute(new Transaction.Closure<IOException>() {
                     @Override
                     public void execute(Transaction tx) throws IOException {
-                        upadateIndex(tx, command, location);
+                        updateIndex(tx, command, location);
                     }
                 });
             } finally {
                 this.indexLock.writeLock().unlock();
             }
+        }
+    }
+
+    @SuppressWarnings("rawtypes")
+    protected void process(final KahaUpdateMessageCommand command, final Location location) throws IOException {
+        this.indexLock.writeLock().lock();
+        try {
+            pageFile.tx().execute(new Transaction.Closure<IOException>() {
+                @Override
+                public void execute(Transaction tx) throws IOException {
+                    updateIndex(tx, command, location);
+                }
+            });
+        } finally {
+            this.indexLock.writeLock().unlock();
         }
     }
 
@@ -1240,26 +1274,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
                 updates = preparedTransactions.remove(key);
             }
         }
-        if (isRewriteOnRedelivery()) {
-            persistRedeliveryCount(updates);
-        }
     }
-
-    @SuppressWarnings("rawtypes")
-    private void persistRedeliveryCount(List<Operation> updates)  throws IOException {
-        if (updates != null) {
-            for (Operation operation : updates) {
-                operation.getCommand().visit(new Visitor() {
-                    @Override
-                    public void visit(KahaRemoveMessageCommand command) throws IOException {
-                        incrementRedeliveryAndReWrite(command.getMessageId(), command.getDestination());
-                    }
-                });
-            }
-        }
-    }
-
-   abstract void incrementRedeliveryAndReWrite(String key, KahaDestination destination) throws IOException;
 
     // /////////////////////////////////////////////////////////////////
     // These methods do the actual index updates.
@@ -1268,7 +1283,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
     protected final ReentrantReadWriteLock indexLock = new ReentrantReadWriteLock();
     private final HashSet<Integer> journalFilesBeingReplicated = new HashSet<Integer>();
 
-    void upadateIndex(Transaction tx, KahaAddMessageCommand command, Location location) throws IOException {
+    void updateIndex(Transaction tx, KahaAddMessageCommand command, Location location) throws IOException {
         StoredDestination sd = getStoredDestination(command.getDestination(), tx);
 
         // Skip adding the message to the index if this is a topic and there are
@@ -1304,6 +1319,25 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
         }
         // record this id in any event, initial send or recovery
         metadata.producerSequenceIdTracker.isDuplicate(command.getMessageId());
+        metadata.lastUpdate = location;
+    }
+
+    void updateIndex(Transaction tx, KahaUpdateMessageCommand updateMessageCommand, Location location) throws IOException {
+        KahaAddMessageCommand command = updateMessageCommand.getMessage();
+        StoredDestination sd = getStoredDestination(command.getDestination(), tx);
+
+        Long id = sd.messageIdIndex.get(tx, command.getMessageId());
+        if (id != null) {
+            sd.orderIndex.put(
+                    tx,
+                    command.getPrioritySupported() ? command.getPriority() : javax.jms.Message.DEFAULT_PRIORITY,
+                    id,
+                    new MessageKeys(command.getMessageId(), location)
+            );
+            sd.locationIndex.put(tx, location, id);
+        } else {
+            LOG.warn("Non existent message update attempt rejected. Destination: {}://{}, Message id: {}", command.getDestination().getType(), command.getDestination().getName(), command.getMessageId());
+        }
         metadata.lastUpdate = location;
     }
 
@@ -2289,6 +2323,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
     @SuppressWarnings("rawtypes")
     protected final LinkedHashMap<TransactionId, List<Operation>> preparedTransactions = new LinkedHashMap<TransactionId, List<Operation>>();
     protected final Set<String> ackedAndPrepared = new HashSet<String>();
+    protected final Set<String> rolledBackAcks = new HashSet<String>();
 
     // messages that have prepared (pending) acks cannot be re-dispatched unless the outcome is rollback,
     // till then they are skipped by the store.
@@ -2304,12 +2339,16 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
         }
     }
 
-    public void forgetRecoveredAcks(ArrayList<MessageAck> acks) throws IOException {
+    public void forgetRecoveredAcks(ArrayList<MessageAck> acks, boolean rollback) throws IOException {
         if (acks != null) {
             this.indexLock.writeLock().lock();
             try {
                 for (MessageAck ack : acks) {
-                    ackedAndPrepared.remove(ack.getLastMessageId().toProducerKey());
+                    final String id = ack.getLastMessageId().toProducerKey();
+                    ackedAndPrepared.remove(id);
+                    if (rollback) {
+                        rolledBackAcks.add(id);
+                    }
                 }
             } finally {
                 this.indexLock.writeLock().unlock();
@@ -2364,7 +2403,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
 
         @Override
         public void execute(Transaction tx) throws IOException {
-            upadateIndex(tx, command, location);
+            updateIndex(tx, command, location);
         }
 
     }
@@ -2385,8 +2424,12 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
     // Initialization related implementation methods.
     // /////////////////////////////////////////////////////////////////
 
-    private PageFile createPageFile() {
-        PageFile index = new PageFile(directory, "db");
+    private PageFile createPageFile() throws IOException {
+        if( indexDirectory == null ) {
+            indexDirectory = directory;
+        }
+        IOHelper.mkdirs(indexDirectory);
+        PageFile index = new PageFile(indexDirectory, "db");
         index.setEnableWriteThread(isEnableIndexWriteAsync());
         index.setWriteBatchSize(getIndexWriteBatchSize());
         index.setPageCacheSize(indexCacheSize);
@@ -2503,7 +2546,7 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
         return this.metadata.producerSequenceIdTracker.getAuditDepth();
     }
 
-    public PageFile getPageFile() {
+    public PageFile getPageFile() throws IOException {
         if (pageFile == null) {
             pageFile = createPageFile();
         }
@@ -2588,14 +2631,6 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
      */
     public void setDirectoryArchive(File directoryArchive) {
         this.directoryArchive = directoryArchive;
-    }
-
-    public boolean isRewriteOnRedelivery() {
-        return rewriteOnRedelivery;
-    }
-
-    public void setRewriteOnRedelivery(boolean rewriteOnRedelivery) {
-        this.rewriteOnRedelivery = rewriteOnRedelivery;
     }
 
     public boolean isArchiveCorruptedIndex() {
@@ -2928,6 +2963,12 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
             return lastGetPriority;
         }
 
+        public boolean alreadyDispatched(Long sequence) {
+            return (cursor.highPriorityCursorPosition > 0 && cursor.highPriorityCursorPosition >= sequence) ||
+                    (cursor.defaultCursorPosition > 0 && cursor.defaultCursorPosition >= sequence) ||
+                    (cursor.lowPriorityCursorPosition > 0 && cursor.lowPriorityCursorPosition >= sequence);
+        }
+
         class MessageOrderIterator implements Iterator<Entry<Long, MessageKeys>>{
             Iterator<Entry<Long, MessageKeys>>currentIterator;
             final Iterator<Entry<Long, MessageKeys>>highIterator;
@@ -3056,5 +3097,13 @@ public abstract class MessageDatabase extends ServiceSupport implements BrokerSe
                 throw ioe;
             }
         }
+    }
+
+    public File getIndexDirectory() {
+        return indexDirectory;
+    }
+
+    public void setIndexDirectory(File indexDirectory) {
+        this.indexDirectory = indexDirectory;
     }
 }

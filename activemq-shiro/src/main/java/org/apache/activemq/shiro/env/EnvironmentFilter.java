@@ -14,36 +14,32 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.activemq.broker;
+package org.apache.activemq.shiro.env;
 
-import junit.framework.Test;
-import org.apache.activemq.leveldb.LevelDBStore;
-
-import java.io.IOException;
+import org.apache.activemq.shiro.SecurityFilter;
+import org.apache.shiro.env.Environment;
 
 /**
+ * An abstract {@code BrokerFilter} that makes the Shiro {@link Environment} available to subclasses.
+ *
+ * @since 5.10.0
  */
-public class LevelDBRedeliveryRestartTest extends RedeliveryRestartTest {
-    @Override
-    protected void configureBroker(BrokerService broker) throws Exception {
-        broker.setDestinationPolicy(policyMap);
-        LevelDBStore store = new LevelDBStore();
-        broker.setPersistenceAdapter(store);
-        broker.addConnector("tcp://0.0.0.0:0");
+public abstract class EnvironmentFilter extends SecurityFilter {
+
+    private Environment environment;
+
+    public EnvironmentFilter() {
     }
 
-    @Override
-    protected void stopBrokerWithStoreFailure() throws Exception {
-        broker.stop();
-        broker.waitUntilStopped();
+    public Environment getEnvironment() {
+        if (this.environment == null) {
+            String msg = "Environment has not yet been set.  This should be done before this broker filter is used.";
+            throw new IllegalStateException(msg);
+        }
+        return environment;
     }
 
-    public static Test suite() {
-        return suite(LevelDBRedeliveryRestartTest.class);
+    public void setEnvironment(Environment environment) {
+        this.environment = environment;
     }
-
-    public static void main(String[] args) {
-        junit.textui.TestRunner.run(suite());
-    }
-
 }

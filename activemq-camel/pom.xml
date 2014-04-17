@@ -127,6 +127,19 @@
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.apache.openejb</groupId>
+      <artifactId>openejb-core</artifactId>
+      <version>3.1</version>
+      <optional>true</optional>
+      <scope>test</scope>
+      <exclusions>
+        <exclusion>
+          <groupId>org.apache.activemq</groupId>
+          <artifactId>activemq-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
       <groupId>org.objectweb.howl</groupId>
       <artifactId>howl</artifactId>
       <version>1.0.1-1</version>
@@ -189,9 +202,9 @@
               <value>target/</value>
             </property>
           </systemProperties>
-          <excludes>
-            <exclude>**/JmsJdbcXALoadTest.java</exclude><!-- used only for manual xa performance testing -->
-          </excludes>
+          <systemPropertyVariables>
+            <derby.stream.error.file>target/derby.log</derby.stream.error.file>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
     </plugins>

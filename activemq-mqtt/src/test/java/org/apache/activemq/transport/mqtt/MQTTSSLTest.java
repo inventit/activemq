@@ -19,14 +19,12 @@ package org.apache.activemq.transport.mqtt;
 import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
+
 import org.fusesource.mqtt.client.MQTT;
-import org.junit.Ignore;
-import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
 import org.slf4j.Logger;
@@ -53,14 +51,6 @@ public class MQTTSSLTest extends MQTTTest {
         return "mqtt+ssl";
     }
 
-    @Ignore("See AMQ-4712")
-    @Override
-    @Test
-    public void testReceiveMessageSentWhileOffline() throws Exception {
-        super.testReceiveMessageSentWhileOffline();
-    }
-
-
     protected MQTT createMQTTConnection() throws Exception {
         MQTT mqtt = new MQTT();
         mqtt.setConnectAttemptsMax(1);
@@ -70,6 +60,15 @@ public class MQTTSSLTest extends MQTTTest {
         SSLContext ctx = SSLContext.getInstance("TLS");
         ctx.init(new KeyManager[0], new TrustManager[]{new DefaultTrustManager()}, new SecureRandom());
         mqtt.setSslContext(ctx);
+        return mqtt;
+    }
+
+    protected MQTT createMQTTConnection(String clientId, boolean clean) throws Exception {
+        MQTT mqtt = createMQTTConnection();
+        if (clientId != null) {
+            mqtt.setClientId(clientId);
+        }
+        mqtt.setCleanSession(clean);
         return mqtt;
     }
 

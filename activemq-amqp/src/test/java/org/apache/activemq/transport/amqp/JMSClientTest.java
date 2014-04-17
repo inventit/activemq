@@ -1,4 +1,4 @@
-/**
+/**                           >>>>>> pumping
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
@@ -47,17 +47,38 @@ import org.apache.activemq.broker.jmx.QueueViewMBean;
 import org.apache.activemq.transport.amqp.joram.ActiveMQAdmin;
 import org.apache.activemq.util.Wait;
 import org.apache.qpid.amqp_1_0.jms.impl.ConnectionFactoryImpl;
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TestName;
 import org.objectweb.jtests.jms.framework.TestConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class JMSClientTest extends AmqpTestSupport {
-
+    protected static final Logger LOG = LoggerFactory.getLogger(JMSClientTest.class);
     @Rule public TestName name = new TestName();
+    java.util.logging.Logger frameLoggger = java.util.logging.Logger.getLogger("FRM");
+
+
+    @Override
+    @Before
+    public void setUp() throws Exception {
+        LOG.debug("in setUp of {}", name.getMethodName());
+        super.setUp();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        LOG.debug("in tearDown of {}", name.getMethodName());
+        super.tearDown();
+        Thread.sleep(500);
+    }
 
     @SuppressWarnings("rawtypes")
-    @Test
+    @Test(timeout=30000)
     public void testProducerConsume() throws Exception {
         ActiveMQAdmin.enableJMSFrameTracing();
 
@@ -82,6 +103,40 @@ public class JMSClientTest extends AmqpTestSupport {
             Message msg = consumer.receive(TestConfig.TIMEOUT);
             assertNotNull(msg);
             assertTrue(msg instanceof TextMessage);
+        }
+        connection.close();
+    }
+
+    @Test(timeout=30000)
+    public void testAnonymousProducerConsume() throws Exception {
+        ActiveMQAdmin.enableJMSFrameTracing();
+
+        Connection connection = createConnection();
+        {
+            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            Queue queue1 = session.createQueue(name.toString() + "1");
+            Queue queue2 = session.createQueue(name.toString() + "2");
+            MessageProducer p = session.createProducer(null);
+
+            TextMessage message = session.createTextMessage();
+            message.setText("hello");
+            p.send(queue1, message);
+            p.send(queue2, message);
+
+            {
+                MessageConsumer consumer = session.createConsumer(queue1);
+                Message msg = consumer.receive(TestConfig.TIMEOUT);
+                assertNotNull(msg);
+                assertTrue(msg instanceof TextMessage);
+                consumer.close();
+            }
+            {
+                MessageConsumer consumer = session.createConsumer(queue2);
+                Message msg = consumer.receive(TestConfig.TIMEOUT);
+                assertNotNull(msg);
+                assertTrue(msg instanceof TextMessage);
+                consumer.close();
+            }
         }
         connection.close();
     }
@@ -117,7 +172,7 @@ public class JMSClientTest extends AmqpTestSupport {
         connection.close();
     }
 
-    @Test
+    @Test(timeout=30000)
     public void testRollbackRececeivedMessage() throws Exception {
 
         ActiveMQAdmin.enableJMSFrameTracing();
@@ -161,7 +216,7 @@ public class JMSClientTest extends AmqpTestSupport {
         connection.close();
     }
 
-    @Test
+    @Test(timeout=60000)
     public void testTXConsumerAndLargeNumberOfMessages() throws Exception {
 
         ActiveMQAdmin.enableJMSFrameTracing();
@@ -201,7 +256,7 @@ public class JMSClientTest extends AmqpTestSupport {
     }
 
     @SuppressWarnings("rawtypes")
-    @Test
+    @Test(timeout=30000)
     public void testSelectors() throws Exception{
         ActiveMQAdmin.enableJMSFrameTracing();
 
@@ -330,7 +385,7 @@ public class JMSClientTest extends AmqpTestSupport {
         }
     }
 
-    @Test(timeout=30000)
+    @Test(timeout=90000)
     public void testConsumerReceiveNoWaitThrowsWhenBrokerStops() throws Exception {
 
         Connection connection = createConnection();
@@ -354,7 +409,7 @@ public class JMSClientTest extends AmqpTestSupport {
         try {
             for (int i = 0; i < 10; ++i) {
                 consumer.receiveNoWait();
-                TimeUnit.SECONDS.sleep(1);
+                TimeUnit.MILLISECONDS.sleep(1000 + (i * 100));
             }
             fail("Should have thrown an IllegalStateException");
         } catch (Exception ex) {
@@ -362,7 +417,7 @@ public class JMSClientTest extends AmqpTestSupport {
         }
     }
 
-    @Test(timeout=30000)
+    @Test(timeout=60000)
     public void testConsumerReceiveTimedThrowsWhenBrokerStops() throws Exception {
 
         Connection connection = createConnection();
@@ -385,7 +440,7 @@ public class JMSClientTest extends AmqpTestSupport {
 
         try {
             for (int i = 0; i < 10; ++i) {
-                consumer.receive(1000);
+                consumer.receive(1000 + (i * 100));
             }
             fail("Should have thrown an IllegalStateException");
         } catch (Exception ex) {
@@ -635,7 +690,7 @@ public class JMSClientTest extends AmqpTestSupport {
     public void testConnectionsAreClosed() throws Exception {
         ActiveMQAdmin.enableJMSFrameTracing();
 
-        final ConnectorViewMBean connector = getProxyToConnectionView("amqp");
+        final ConnectorViewMBean connector = getProxyToConnectionView(getTargetConnectorName());
         LOG.info("Current number of Connections is: {}", connector.connectionCount());
 
         ArrayList<Connection> connections = new ArrayList<Connection>();
@@ -660,12 +715,16 @@ public class JMSClientTest extends AmqpTestSupport {
         }));
     }
 
+    protected String getTargetConnectorName() {
+        return "amqp";
+    }
+
     @Test(timeout=30000)
     public void testExecptionListenerCalledOnBrokerStop() throws Exception {
+        ActiveMQAdmin.enableJMSFrameTracing();
 
         Connection connection = createConnection();
-        Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
-        Queue queue = session.createQueue(name.toString());
+        connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
         connection.start();
 
         final CountDownLatch called = new CountDownLatch(1);
@@ -694,21 +753,131 @@ public class JMSClientTest extends AmqpTestSupport {
         assertTrue("No exception listener event fired.", called.await(15, TimeUnit.SECONDS));
     }
 
+    @Test(timeout=30000)
+    public void testSessionTransactedCommit() throws JMSException, InterruptedException {
+        ActiveMQAdmin.enableJMSFrameTracing();
+
+        Connection connection = createConnection();
+        Session session = connection.createSession(true, Session.AUTO_ACKNOWLEDGE);
+        Queue queue = session.createQueue(name.toString());
+
+        connection.start();
+
+        // transacted producer
+        MessageProducer pr = session.createProducer(queue);
+        for (int i = 0; i < 10; i++) {
+            Message m = session.createTextMessage("TestMessage" + i);
+            pr.send(m);
+        }
+
+        // No commit in place, so no message should be dispatched.
+        MessageConsumer consumer = session.createConsumer(queue);
+        TextMessage m = (TextMessage) consumer.receive(5000);
+
+        assertNull(m);
+
+        session.commit();
+
+        // Messages should be available now.
+        for (int i = 0; i < 10; i++) {
+            Message msg = consumer.receive(5000);
+            assertNotNull(msg);
+        }
+
+        session.close();
+        connection.close();
+    }
+
+    @Test(timeout=30000)
+    public void testSessionTransactedRollback() throws JMSException, InterruptedException {
+        ActiveMQAdmin.enableJMSFrameTracing();
+
+        Connection connection = createConnection();
+        Session session = connection.createSession(true, Session.AUTO_ACKNOWLEDGE);
+        Queue queue = session.createQueue(name.toString());
+
+        connection.start();
+
+        // transacted producer
+        MessageProducer pr = session.createProducer(queue);
+        for (int i = 0; i < 10; i++) {
+            Message m = session.createTextMessage("TestMessage" + i);
+            pr.send(m);
+        }
+
+        session.rollback();
+
+        // No commit in place, so no message should be dispatched.
+        MessageConsumer consumer = session.createConsumer(queue);
+        TextMessage m = (TextMessage) consumer.receive(5000);
+        assertNull(m);
+
+        session.close();
+        connection.close();
+    }
+
+    private String createLargeString(int sizeInBytes) {
+        byte[] base = {1, 2, 3, 4, 5, 6, 7, 8, 9, 0};
+        StringBuilder builder = new StringBuilder();
+        for (int i = 0; i < sizeInBytes; i++) {
+            builder.append(base[i % base.length]);
+        }
+
+        LOG.debug("Created string with size : " + builder.toString().getBytes().length + " bytes");
+        return builder.toString();
+    }
+
+    @Test(timeout = 60 * 1000)
+    public void testSendLargeMessage() throws JMSException, InterruptedException {
+        Connection connection = createConnection();
+        Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        String queueName = name.toString();
+        Queue queue = session.createQueue(queueName);
+
+        MessageProducer producer=session.createProducer(queue);
+        int messageSize = 1024 * 1024;
+        String messageText = createLargeString(messageSize);
+        Message m=session.createTextMessage(messageText);
+        LOG.debug("Sending message of {} bytes on queue {}", messageSize, queueName);
+        producer.send(m);
+
+        MessageConsumer  consumer=session.createConsumer(queue);
+
+        Message message = consumer.receive();
+        assertNotNull(message);
+        assertTrue(message instanceof TextMessage);
+        TextMessage textMessage = (TextMessage) message;
+        LOG.debug(">>>> Received message of length {}", textMessage.getText().length());
+        assertEquals(messageSize, textMessage.getText().length());
+        assertEquals(messageText, textMessage.getText());
+    }
+
     private Connection createConnection() throws JMSException {
-        return createConnection(name.toString(), false);
+        return createConnection(name.toString(), false, false);
     }
 
     private Connection createConnection(boolean syncPublish) throws JMSException {
-        return createConnection(name.toString(), syncPublish);
+        return createConnection(name.toString(), syncPublish, false);
     }
 
     private Connection createConnection(String clientId) throws JMSException {
-        return createConnection(clientId, false);
+        return createConnection(clientId, false, false);
     }
 
-    private Connection createConnection(String clientId, boolean syncPublish) throws JMSException {
+    /**
+     * Can be overridden in subclasses to test against a different transport suchs as NIO.
+     *
+     * @return the port to connect to on the Broker.
+     */
+    protected int getBrokerPort() {
+        return port;
+    }
 
-        final ConnectionFactoryImpl factory = new ConnectionFactoryImpl("localhost", port, "admin", "password");
+    protected Connection createConnection(String clientId, boolean syncPublish, boolean useSsl) throws JMSException {
+
+        int brokerPort = getBrokerPort();
+        LOG.debug("Creating connection on port {}", brokerPort);
+        final ConnectionFactoryImpl factory = new ConnectionFactoryImpl("localhost", brokerPort, "admin", "password", null, useSsl);
 
         factory.setSyncPublish(syncPublish);
         factory.setTopicPrefix("topic://");

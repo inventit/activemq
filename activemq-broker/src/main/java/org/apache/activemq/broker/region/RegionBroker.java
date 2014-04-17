@@ -596,6 +596,17 @@ public class RegionBroker extends EmptyBroker {
                 long totalTime = endTime - message.getBrokerInTime();
                 ((Destination) message.getRegionDestination()).getDestinationStatistics().getProcessTime().addTime(totalTime);
             }
+            if (((BaseDestination) message.getRegionDestination()).isPersistJMSRedelivered() && !message.isRedelivered() && message.isPersistent()) {
+                final int originalValue = message.getRedeliveryCounter();
+                message.incrementRedeliveryCounter();
+                try {
+                    ((BaseDestination) message.getRegionDestination()).getMessageStore().updateMessage(message);
+                } catch (IOException error) {
+                    LOG.error("Failed to persist JMSRedeliveryFlag on {} in {}", message.getMessageId(), message.getDestination(), error);
+                } finally {
+                    message.setRedeliveryCounter(originalValue);
+                }
+            }
         }
     }
 
@@ -731,10 +742,11 @@ public class RegionBroker extends EmptyBroker {
                             // it is only populated if the message is routed to
                             // another destination like the DLQ
                             ActiveMQDestination deadLetterDestination = deadLetterStrategy.getDeadLetterQueueFor(message, subscription);
-                            if (context.getBroker() == null) {
-                                context.setBroker(getRoot());
+                            ConnectionContext adminContext = context;
+                            if (context.getSecurityContext() == null || !context.getSecurityContext().isBrokerContext()) {
+                                adminContext = BrokerSupport.getConnectionContext(this);
                             }
-                            BrokerSupport.resendNoCopy(context, message, deadLetterDestination);
+                            BrokerSupport.resendNoCopy(adminContext, message, deadLetterDestination);
                             return true;
                         }
                     } else {

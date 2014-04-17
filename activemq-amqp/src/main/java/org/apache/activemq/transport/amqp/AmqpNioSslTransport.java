@@ -16,21 +16,18 @@
  */
 package org.apache.activemq.transport.amqp;
 
+import org.apache.activemq.transport.nio.NIOSSLTransport;
+import org.apache.activemq.wireformat.WireFormat;
+
+import javax.net.SocketFactory;
 import java.io.IOException;
 import java.net.Socket;
 import java.net.URI;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 
-import javax.net.SocketFactory;
-
-import org.apache.activemq.transport.nio.NIOSSLTransport;
-import org.apache.activemq.wireformat.WireFormat;
-import org.fusesource.hawtbuf.Buffer;
-
 public class AmqpNioSslTransport extends NIOSSLTransport {
-
-    private final ByteBuffer magic = ByteBuffer.allocate(8);
+    private AmqpNioTransportHelper amqpNioTransportHelper = new AmqpNioTransportHelper(this);
 
     public AmqpNioSslTransport(WireFormat wireFormat, SocketFactory socketFactory, URI remoteLocation, URI localLocation) throws UnknownHostException, IOException {
         super(wireFormat, socketFactory, remoteLocation, localLocation);
@@ -50,27 +47,6 @@ public class AmqpNioSslTransport extends NIOSSLTransport {
 
     @Override
     protected void processCommand(ByteBuffer plain) throws Exception {
-
-        byte[] fill = new byte[plain.remaining()];
-        plain.get(fill);
-
-        ByteBuffer payload = ByteBuffer.wrap(fill);
-
-        if (magic.position() != 8) {
-
-            while (payload.hasRemaining() && magic.position() < 8) {
-                magic.put(payload.get());
-            }
-
-            if (!magic.hasRemaining()) {
-                magic.flip();
-                doConsume(new AmqpHeader(new Buffer(magic)));
-                magic.position(8);
-            }
-        }
-
-        if (payload.hasRemaining()) {
-            doConsume(AmqpSupport.toBuffer(payload));
-        }
+        amqpNioTransportHelper.processCommand(plain);
     }
 }

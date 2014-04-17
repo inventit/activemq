@@ -16,7 +16,17 @@
  */
 package org.apache.activemq.transport.amqp;
 
-import java.io.DataInputStream;
+import org.apache.activemq.transport.nio.NIOOutputStream;
+import org.apache.activemq.transport.nio.SelectorManager;
+import org.apache.activemq.transport.nio.SelectorSelection;
+import org.apache.activemq.transport.tcp.TcpTransport;
+import org.apache.activemq.util.IOExceptionSupport;
+import org.apache.activemq.util.ServiceStopper;
+import org.apache.activemq.wireformat.WireFormat;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.net.SocketFactory;
 import java.io.DataOutputStream;
 import java.io.EOFException;
 import java.io.IOException;
@@ -27,25 +37,14 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.SocketChannel;
 
-import javax.net.SocketFactory;
-
-import org.apache.activemq.transport.nio.NIOInputStream;
-import org.apache.activemq.transport.nio.NIOOutputStream;
-import org.apache.activemq.transport.nio.SelectorManager;
-import org.apache.activemq.transport.nio.SelectorSelection;
-import org.apache.activemq.transport.tcp.TcpTransport;
-import org.apache.activemq.util.IOExceptionSupport;
-import org.apache.activemq.util.ServiceStopper;
-import org.apache.activemq.wireformat.WireFormat;
-import org.fusesource.hawtbuf.Buffer;
-
 /**
  * An implementation of the {@link org.apache.activemq.transport.Transport} interface for using AMQP over NIO
  */
 public class AmqpNioTransport extends TcpTransport {
-
+    private static final Logger LOG = LoggerFactory.getLogger(AmqpNioTransport.class);
     private SocketChannel channel;
     private SelectorSelection selection;
+    private AmqpNioTransportHelper amqpNioTransportHelper = new AmqpNioTransportHelper(this);
 
     private ByteBuffer inputBuffer;
 
@@ -57,17 +56,20 @@ public class AmqpNioTransport extends TcpTransport {
         super(wireFormat, socket);
     }
 
+    @Override
     protected void initializeStreams() throws IOException {
         channel = socket.getChannel();
         channel.configureBlocking(false);
         // listen for events telling us when the socket is readable.
         selection = SelectorManager.getInstance().register(channel, new SelectorManager.Listener() {
+            @Override
             public void onSelect(SelectorSelection selection) {
                 if (!isStopped()) {
                     serviceRead();
                 }
             }
 
+            @Override
             public void onError(SelectorSelection selection, Throwable error) {
                 if (error instanceof IOException) {
                     onException((IOException) error);
@@ -105,25 +107,10 @@ public class AmqpNioTransport extends TcpTransport {
                 receiveCounter += readSize;
 
                 inputBuffer.flip();
+                amqpNioTransportHelper.processCommand(inputBuffer);
 
-                if( !magicRead ) {
-                    if( inputBuffer.remaining()>= 8 ) {
-                        magicRead = true;
-                        Buffer magic = new Buffer(8);
-                        for (int i = 0; i < 8; i++) {
-                            magic.data[i] = inputBuffer.get();
-                        }
-                        doConsume(new AmqpHeader(magic));
-                    } else {
-                        inputBuffer.flip();
-                        continue;
-                    }
-                }
-
-                doConsume(AmqpSupport.toBuffer(inputBuffer));
                 // clear the buffer
                 inputBuffer.clear();
-
             }
         } catch (IOException e) {
             onException(e);
@@ -132,12 +119,14 @@ public class AmqpNioTransport extends TcpTransport {
         }
     }
 
+    @Override
     protected void doStart() throws Exception {
         connect();
         selection.setInterestOps(SelectionKey.OP_READ);
         selection.enable();
     }
 
+    @Override
     protected void doStop(ServiceStopper stopper) throws Exception {
         try {
             if (selection != null) {

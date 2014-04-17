@@ -129,6 +129,10 @@
           <groupId>org.eclipse</groupId>
           <artifactId>osgi</artifactId>
         </exclusion>
+        <exclusion>
+          <groupId>org.apache.xerces</groupId>
+          <artifactId>xercesImpl</artifactId>
+        </exclusion>
       </exclusions>
     </dependency>
     <dependency>
@@ -141,6 +145,17 @@
       <groupId>org.osgi</groupId>
       <artifactId>org.osgi.core</artifactId>
       <version>${org.osgi.core-version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.qpid</groupId>
+      <artifactId>proton-jms</artifactId>
+      <version>${qpid-proton-version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.qpid</groupId>
+      <artifactId>qpid-amqp-1-0-client-jms</artifactId>
+      <version>${qpid-jms-version}</version>
       <scope>test</scope>
     </dependency>
 

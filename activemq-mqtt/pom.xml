@@ -114,6 +114,7 @@
     <dependency>
       <groupId>org.springframework</groupId>
       <artifactId>spring-context</artifactId>
+      <optional>true</optional>
     </dependency>
     <dependency>
       <groupId>xalan</groupId>
@@ -134,6 +135,12 @@
       <type>test-jar</type>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.apache.activemq</groupId>
+      <artifactId>activemq-kahadb-store</artifactId>
+      <scope>test</scope>
+    </dependency>
+
     <dependency>
       <groupId>org.eclipse.paho</groupId>
       <artifactId>mqtt-client</artifactId>

@@ -20,12 +20,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.net.SocketException;
 import java.net.URI;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Properties;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -149,9 +144,13 @@ public class TransportConnection implements Connection, Task, CommandVisitor {
                         throw new RuntimeException("Protocol violation - Command corrupted: " + o.toString());
                     }
                     Command command = (Command) o;
-                    Response response = service(command);
-                    if (response != null && !brokerService.isStopping() ) {
-                        dispatchSync(response);
+                    if (!brokerService.isStopping()) {
+                        Response response = service(command);
+                        if (response != null && !brokerService.isStopping()) {
+                            dispatchSync(response);
+                        }
+                    } else {
+                        throw new BrokerStoppedException("Broker " + brokerService + " is being stopped");
                     }
                 } finally {
                     serviceLock.readLock().unlock();
@@ -379,6 +378,33 @@ public class TransportConnection implements Connection, Task, CommandVisitor {
         return null;
     }
 
+    public int getActiveTransactionCount() {
+        int rc = 0;
+        for (TransportConnectionState cs : connectionStateRegister.listConnectionStates()) {
+            Collection<TransactionState> transactions = cs.getTransactionStates();
+            for (TransactionState transaction : transactions) {
+                rc++;
+            }
+        }
+        return rc;
+    }
+
+    public Long getOldestActiveTransactionDuration() {
+        TransactionState oldestTX = null;
+        for (TransportConnectionState cs : connectionStateRegister.listConnectionStates()) {
+            Collection<TransactionState> transactions = cs.getTransactionStates();
+            for (TransactionState transaction : transactions) {
+                if( oldestTX ==null || oldestTX.getCreatedAt() < transaction.getCreatedAt() ) {
+                    oldestTX = transaction;
+                }
+            }
+        }
+        if( oldestTX == null ) {
+            return null;
+        }
+        return System.currentTimeMillis() - oldestTX.getCreatedAt();
+    }
+
     @Override
     public Response processEndTransaction(TransactionInfo info) throws Exception {
         // No need to do anything. This packet is just sent by the client
@@ -477,6 +503,8 @@ public class TransportConnection implements Connection, Task, CommandVisitor {
         ConsumerBrokerExchange consumerExchange = getConsumerBrokerExchange(ack.getConsumerId());
         if (consumerExchange != null) {
             broker.acknowledge(consumerExchange, ack);
+        } else if (ack.isInTransaction()) {
+            LOG.warn("no matching consumer, ignoring ack {}", consumerExchange, ack);
         }
         return null;
     }
@@ -1577,5 +1605,9 @@ public class TransportConnection implements Connection, Task, CommandVisitor {
             }
         }
         return result;
+    }
+
+    public WireFormatInfo getRemoteWireFormatInfo() {
+        return wireFormatInfo;
     }
 }

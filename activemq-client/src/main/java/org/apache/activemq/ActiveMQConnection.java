@@ -205,6 +205,7 @@ public class ActiveMQConnection implements Connection, TopicConnection, QueueCon
     private boolean messagePrioritySupported = true;
     private boolean transactedIndividualAck = false;
     private boolean nonBlockingRedelivery = false;
+    private boolean rmIdFromConnectionId = false;
 
     private int maxThreadPoolSize = DEFAULT_THREAD_POOL_SIZE;
     private RejectedExecutionHandler rejectedTaskHandler = null;
@@ -1654,6 +1655,9 @@ public class ActiveMQConnection implements Connection, TopicConnection, QueueCon
      * @throws JMSException
      */
     public String getResourceManagerId() throws JMSException {
+        if (isRmIdFromConnectionId()) {
+            return info.getConnectionId().getValue();
+        }
         waitForBrokerInfo();
         if (brokerInfo == null) {
             throw new JMSException("Connection failed before Broker info was received.");
@@ -1845,6 +1849,10 @@ public class ActiveMQConnection implements Connection, TopicConnection, QueueCon
         dispatchers.remove(consumerId);
     }
 
+    public boolean hasDispatcher(ConsumerId consumerId) {
+        return dispatchers.containsKey(consumerId);
+    }
+
     /**
      * @param o - the command to consume
      */
@@ -1874,6 +1882,8 @@ public class ActiveMQConnection implements Connection, TopicConnection, QueueCon
                                 md.setMessage(msg);
                             }
                             dispatcher.dispatch(md);
+                        } else {
+                            LOG.debug("{} no dispatcher for {} in {}", this, md, dispatchers);
                         }
                         return null;
                     }
@@ -2588,6 +2598,14 @@ public class ActiveMQConnection implements Connection, TopicConnection, QueueCon
 
     public void setNonBlockingRedelivery(boolean nonBlockingRedelivery) {
         this.nonBlockingRedelivery = nonBlockingRedelivery;
+    }
+
+    public boolean isRmIdFromConnectionId() {
+        return rmIdFromConnectionId;
+    }
+
+    public void setRmIdFromConnectionId(boolean rmIdFromConnectionId) {
+        this.rmIdFromConnectionId = rmIdFromConnectionId;
     }
 
     /**

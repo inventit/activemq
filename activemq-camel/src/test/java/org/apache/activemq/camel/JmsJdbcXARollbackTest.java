@@ -18,32 +18,45 @@ package org.apache.activemq.camel;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-
 import javax.jms.Connection;
+import javax.jms.Message;
+import javax.jms.MessageConsumer;
 import javax.jms.MessageProducer;
 import javax.jms.Session;
 import javax.jms.TextMessage;
-
+import javax.transaction.TransactionManager;
 import org.apache.activemq.ActiveMQConnectionFactory;
 import org.apache.activemq.broker.BrokerService;
+import org.apache.activemq.broker.region.policy.SharedDeadLetterStrategy;
 import org.apache.activemq.command.ActiveMQQueue;
 import org.apache.activemq.util.Wait;
+import org.apache.camel.Exchange;
+import org.apache.camel.component.jms.JmsMessage;
 import org.apache.camel.test.spring.CamelSpringTestSupport;
 import org.apache.commons.dbcp.BasicDataSource;
-import org.junit.Ignore;
 import org.junit.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.support.AbstractXmlApplicationContext;
 import org.springframework.context.support.ClassPathXmlApplicationContext;
+import org.springframework.transaction.jta.JtaTransactionManager;
 
-@Ignore("Test hangs")
-public class JmsJdbcXALoadTest extends CamelSpringTestSupport {
-
+/**
+ *  shows rollback and redelivery dlq respected with external tm
+ */
+public class JmsJdbcXARollbackTest extends CamelSpringTestSupport {
+    private static final Logger LOG = LoggerFactory.getLogger(JmsJdbcXARollbackTest.class);
     BrokerService broker = null;
     int messageCount;
 
     public java.sql.Connection initDb() throws Exception {
-        String createStatement = "CREATE TABLE SCP_INPUT_MESSAGES (" + "id int NOT NULL GENERATED ALWAYS AS IDENTITY, " + "messageId varchar(96) NOT NULL, "
-            + "messageCorrelationId varchar(96) NOT NULL, " + "messageContent varchar(2048) NOT NULL, " + "PRIMARY KEY (id) )";
+        String createStatement =
+                "CREATE TABLE SCP_INPUT_MESSAGES (" +
+                        "id int NOT NULL GENERATED ALWAYS AS IDENTITY, " +
+                        "messageId varchar(96) NOT NULL, " +
+                        "messageCorrelationId varchar(96) NOT NULL, " +
+                        "messageContent varchar(2048) NOT NULL, " +
+                        "PRIMARY KEY (id) )";
 
         java.sql.Connection conn = getJDBCConnection();
         try {
@@ -71,41 +84,62 @@ public class JmsJdbcXALoadTest extends CamelSpringTestSupport {
         ResultSet resultSet = jdbcConn.createStatement().executeQuery("SELECT * FROM SCP_INPUT_MESSAGES");
         while (resultSet.next()) {
             count++;
+            log.info("message - seq:" + resultSet.getInt(1)
+                    + ", id: " + resultSet.getString(2)
+                    + ", corr: " + resultSet.getString(3)
+                    + ", content: " + resultSet.getString(4));
         }
-        log.info(count + " messages");
         return count;
     }
 
-    @SuppressWarnings("unused")
     @Test
-    public void testRecoveryCommit() throws Exception {
+    public void testConsumeRollback() throws Exception {
         java.sql.Connection jdbcConn = initDb();
-        final int count = 1000;
 
-        sendJMSMessageToKickOffRoute(count);
+        initTMRef();
+        sendJMSMessageToKickOffRoute();
 
-        final java.sql.Connection freshConnection = getJDBCConnection();
-        assertTrue("did not get replay", Wait.waitFor(new Wait.Condition() {
+        // should go to dlq eventually
+        Wait.waitFor(new Wait.Condition() {
             @Override
             public boolean isSatisified() throws Exception {
-                return count == dumpDb(freshConnection);
+                return consumedFrom(SharedDeadLetterStrategy.DEFAULT_DEAD_LETTER_QUEUE_NAME);
             }
-        }, 20 * 60 * 1000));
-        assertEquals("still one message in db", count, dumpDb(freshConnection));
+        });
+        assertEquals("message in db, commit to db worked", 0, dumpDb(jdbcConn));
+        assertFalse("Nothing to to out q", consumedFrom("scp_transacted_out"));
+
     }
 
-    private void sendJMSMessageToKickOffRoute(int count) throws Exception {
+    private boolean consumedFrom(String qName) throws Exception {
+        ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory("vm://testXA");
+        factory.setWatchTopicAdvisories(false);
+        Connection connection = factory.createConnection();
+        connection.start();
+        Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+        MessageConsumer consumer = session.createConsumer(new ActiveMQQueue(qName));
+        Message message = consumer.receive(500);
+        LOG.info("Got from queue:{} {}", qName, message);
+        connection.close();
+        return message != null;
+    }
+
+    static TransactionManager[] transactionManager = new TransactionManager[1];
+    private void initTMRef() {
+        transactionManager[0] = getMandatoryBean(JtaTransactionManager.class, "jtaTransactionManager").getTransactionManager();
+
+    }
+
+    private void sendJMSMessageToKickOffRoute() throws Exception {
         ActiveMQConnectionFactory factory = new ActiveMQConnectionFactory("vm://testXA");
         factory.setWatchTopicAdvisories(false);
         Connection connection = factory.createConnection();
         connection.start();
         Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
         MessageProducer producer = session.createProducer(new ActiveMQQueue("scp_transacted"));
-        for (int i = 0; i < count; i++) {
-            TextMessage message = session.createTextMessage("Some Text, messageCount:" + messageCount++);
-            message.setJMSCorrelationID("pleaseCorrelate");
-            producer.send(message);
-        }
+        TextMessage message = session.createTextMessage("Some Text, messageCount:" + messageCount++);
+        message.setJMSCorrelationID("pleaseCorrelate");
+        producer.send(message);
         connection.close();
     }
 
@@ -120,6 +154,7 @@ public class JmsJdbcXALoadTest extends CamelSpringTestSupport {
         return brokerService;
     }
 
+    @SuppressWarnings("unchecked")
     @Override
     protected AbstractXmlApplicationContext createApplicationContext() {
 
@@ -133,11 +168,18 @@ public class JmsJdbcXALoadTest extends CamelSpringTestSupport {
             throw new RuntimeException("Failed to start broker", e);
         }
 
-        return new ClassPathXmlApplicationContext("org/apache/activemq/camel/jmsXajdbc.xml");
+        return new ClassPathXmlApplicationContext("org/apache/activemq/camel/jmsXajdbcRollback.xml");
     }
 
-    @Override
-    public void tearDown() throws Exception {
-        super.tearDown();
-    }
+    public static class MarkRollbackOnly {
+            public String enrich(Exchange exchange) throws Exception {
+                LOG.info("Got exchange: " + exchange);
+                LOG.info("Got message: " + ((JmsMessage)exchange.getIn()).getJmsMessage());
+
+                LOG.info("Current tx: " + transactionManager[0].getTransaction());
+                LOG.info("Marking rollback only...");
+                transactionManager[0].getTransaction().setRollbackOnly();
+                return "Some Text";
+            }
+        }
 }

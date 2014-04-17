@@ -27,6 +27,7 @@ import java.util.LinkedList;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.jms.InvalidClientIDException;
 import javax.jms.InvalidSelectorException;
 
 import org.apache.activemq.command.ActiveMQDestination;
@@ -57,6 +58,7 @@ import org.apache.activemq.selector.SelectorParser;
 import org.apache.activemq.util.IOExceptionSupport;
 import org.apache.activemq.util.IdGenerator;
 import org.apache.activemq.util.LongSequenceGenerator;
+import org.apache.qpid.proton.ProtonFactoryLoader;
 import org.apache.qpid.proton.amqp.Binary;
 import org.apache.qpid.proton.amqp.DescribedType;
 import org.apache.qpid.proton.amqp.Symbol;
@@ -97,7 +99,8 @@ import org.apache.qpid.proton.jms.EncodedMessage;
 import org.apache.qpid.proton.jms.InboundTransformer;
 import org.apache.qpid.proton.jms.JMSMappingInboundTransformer;
 import org.apache.qpid.proton.jms.OutboundTransformer;
-import org.apache.qpid.proton.message.impl.MessageImpl;
+import org.apache.qpid.proton.message.Message;
+import org.apache.qpid.proton.message.MessageFactory;
 import org.fusesource.hawtbuf.Buffer;
 import org.fusesource.hawtbuf.ByteArrayOutputStream;
 import org.slf4j.Logger;
@@ -119,11 +122,15 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
     private static final Symbol NO_LOCAL = Symbol.valueOf("no-local");
     private static final Symbol DURABLE_SUBSCRIPTION_ENDED = Symbol.getSymbol("DURABLE_SUBSCRIPTION_ENDED");
 
+    private static final ProtonFactoryLoader<MessageFactory> messageFactoryLoader =
+        new ProtonFactoryLoader<MessageFactory>(MessageFactory.class);
+
     int prefetch = 100;
 
     EngineFactory engineFactory = new EngineFactoryImpl();
     Transport protonTransport = engineFactory.createTransport();
     Connection protonConnection = engineFactory.createConnection();
+    MessageFactory messageFactory = messageFactoryLoader.loadFactory();
 
     public AmqpProtocolConverter(AmqpTransport transport) {
         this.amqpTransport = transport;
@@ -426,7 +433,13 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
 
                 if (response.isException()) {
                     Throwable exception = ((ExceptionResponse) response).getException();
-                    protonConnection.setCondition(new ErrorCondition(AmqpError.UNAUTHORIZED_ACCESS, exception.getMessage()));
+                    if (exception instanceof SecurityException) {
+                        protonConnection.setCondition(new ErrorCondition(AmqpError.UNAUTHORIZED_ACCESS, exception.getMessage()));
+                    } else if (exception instanceof InvalidClientIDException) {
+                        protonConnection.setCondition(new ErrorCondition(AmqpError.INVALID_FIELD, exception.getMessage()));
+                    } else {
+                        protonConnection.setCondition(new ErrorCondition(AmqpError.ILLEGAL_STATE, exception.getMessage()));
+                    }
                     protonConnection.close();
                     pumpProtonToSocket();
                     amqpTransport.onException(IOExceptionSupport.create(exception));
@@ -548,14 +561,20 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
             }
             message.setProducerId(producerId);
 
-            MessageId messageId = message.getMessageId();
-            if (messageId == null) {
-                messageId = new MessageId();
-                message.setMessageId(messageId);
+            // Always override the AMQP client's MessageId with our own.  Preserve the
+            // original in the TextView property for later Ack.
+            MessageId messageId = new MessageId(producerId, messageIdGenerator.getNextSequenceId());
+
+            MessageId amqpMessageId = message.getMessageId();
+            if (amqpMessageId != null) {
+                if (amqpMessageId.getTextView() != null) {
+                    messageId.setTextView(amqpMessageId.getTextView());
+                } else {
+                    messageId.setTextView(amqpMessageId.toString());
+                }
             }
 
-            messageId.setProducerId(producerId);
-            messageId.setProducerSequenceId(messageIdGenerator.getNextSequenceId());
+            message.setMessageId(messageId);
 
             LOG.trace("Inbound Message:{} from Producer:{}", message.getMessageId(), producerId + ":" + messageId.getProducerSequenceId());
 
@@ -567,12 +586,12 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
             }
 
             // Lets handle the case where the expiration was set, but the timestamp
-            // was not set by the client.  Lets assign the timestamp now, and adjust the
+            // was not set by the client. Lets assign the timestamp now, and adjust the
             // expiration.
-            if( message.getExpiration()!= 0 ) {
-                if( message.getTimestamp()==0 ) {
+            if (message.getExpiration() != 0) {
+                if (message.getTimestamp() == 0) {
                     message.setTimestamp(System.currentTimeMillis());
-                    message.setExpiration(message.getTimestamp()+message.getExpiration());
+                    message.setExpiration(message.getTimestamp() + message.getExpiration());
                 }
             }
 
@@ -623,7 +642,7 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
         @Override
         protected void onMessage(Receiver receiver, final Delivery delivery, Buffer buffer) throws Exception {
 
-            MessageImpl msg = new MessageImpl();
+            Message msg = messageFactory.createMessage();
             int offset = buffer.offset;
             int len = buffer.length;
             while (len > 0) {
@@ -681,6 +700,8 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
                             Rejected rejected = new Rejected();
                             rejected.setError(createErrorCondition("failed", er.getException().getMessage()));
                             delivery.disposition(rejected);
+                        } else {
+                            delivery.disposition(Accepted.getInstance());
                         }
                         LOG.debug("TX: {} settling {}", operation, action);
                         delivery.settle();
@@ -736,7 +757,11 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
                         if (response.isException()) {
                             receiver.setTarget(null);
                             Throwable exception = ((ExceptionResponse) response).getException();
-                            receiver.setCondition(new ErrorCondition(AmqpError.INTERNAL_ERROR, exception.getMessage()));
+                            if (exception instanceof SecurityException) {
+                                receiver.setCondition(new ErrorCondition(AmqpError.UNAUTHORIZED_ACCESS, exception.getMessage()));
+                            } else {
+                                receiver.setCondition(new ErrorCondition(AmqpError.INTERNAL_ERROR, exception.getMessage()));
+                            }
                             receiver.close();
                         } else {
                             receiver.open();
@@ -1144,8 +1169,11 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
                         if (response.isException()) {
                             sender.setSource(null);
                             Throwable exception = ((ExceptionResponse) response).getException();
-                            String name = exception.getClass().getName();
-                            sender.setCondition(new ErrorCondition(AmqpError.INTERNAL_ERROR, exception.getMessage()));
+                            if (exception instanceof SecurityException) {
+                                sender.setCondition(new ErrorCondition(AmqpError.UNAUTHORIZED_ACCESS, exception.getMessage()));
+                            } else {
+                                sender.setCondition(new ErrorCondition(AmqpError.INTERNAL_ERROR, exception.getMessage()));
+                            }
                         }
                         sender.open();
                         pumpProtonToSocket();
@@ -1197,11 +1225,13 @@ class AmqpProtocolConverter implements IAmqpProtocolConverter {
                     if (response.isException()) {
                         sender.setSource(null);
                         Throwable exception = ((ExceptionResponse) response).getException();
-                        Symbol condition = AmqpError.INTERNAL_ERROR;
-                        if (exception instanceof InvalidSelectorException) {
-                            condition = AmqpError.INVALID_FIELD;
+                        if (exception instanceof SecurityException) {
+                            sender.setCondition(new ErrorCondition(AmqpError.UNAUTHORIZED_ACCESS, exception.getMessage()));
+                        } else if (exception instanceof InvalidSelectorException) {
+                            sender.setCondition(new ErrorCondition(AmqpError.INVALID_FIELD, exception.getMessage()));
+                        } else {
+                            sender.setCondition(new ErrorCondition(AmqpError.INTERNAL_ERROR, exception.getMessage()));
                         }
-                        sender.setCondition(new ErrorCondition(condition, exception.getMessage()));
                         subscriptionsByConsumerId.remove(id);
                         sender.close();
                     } else {

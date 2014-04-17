@@ -16,22 +16,23 @@
  */
 package org.apache.activemq.transport.mqtt;
 
+import java.util.LinkedList;
+
 import org.apache.activemq.broker.BrokerPlugin;
 import org.apache.activemq.broker.BrokerService;
 import org.apache.activemq.command.ActiveMQTopic;
 import org.apache.activemq.filter.DestinationMapEntry;
-import org.apache.activemq.security.*;
+import org.apache.activemq.security.AuthenticationUser;
+import org.apache.activemq.security.AuthorizationEntry;
+import org.apache.activemq.security.AuthorizationPlugin;
+import org.apache.activemq.security.DefaultAuthorizationMap;
+import org.apache.activemq.security.SimpleAuthenticationPlugin;
 import org.apache.activemq.util.Wait;
 import org.fusesource.mqtt.client.BlockingConnection;
 import org.fusesource.mqtt.client.MQTT;
-import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.BlockJUnit4ClassRunner;
-
-import java.util.LinkedList;
-
-import static org.junit.Assert.assertTrue;
 
 @RunWith(BlockJUnit4ClassRunner.class)
 public class MQTTNioTest extends MQTTTest {
@@ -39,13 +40,6 @@ public class MQTTNioTest extends MQTTTest {
     @Override
     protected String getProtocolScheme() {
         return "mqtt+nio";
-    }
-
-    @Ignore("See AMQ-4712")
-    @Override
-    @Test
-    public void testReceiveMessageSentWhileOffline() throws Exception {
-        super.testReceiveMessageSentWhileOffline();
     }
 
     @Test
