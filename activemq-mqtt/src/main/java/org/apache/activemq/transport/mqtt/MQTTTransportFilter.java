@@ -19,13 +19,16 @@ package org.apache.activemq.transport.mqtt;
 import java.io.IOException;
 import java.security.cert.X509Certificate;
 import java.util.concurrent.atomic.AtomicBoolean;
+
 import javax.jms.JMSException;
 
+import org.apache.activemq.broker.BrokerContext;
 import org.apache.activemq.broker.BrokerService;
 import org.apache.activemq.command.Command;
 import org.apache.activemq.transport.Transport;
 import org.apache.activemq.transport.TransportFilter;
 import org.apache.activemq.transport.TransportListener;
+import org.apache.activemq.transport.mqtt.moat.MoatMessageConverter;
 import org.apache.activemq.transport.tcp.SslTransport;
 import org.apache.activemq.util.IOExceptionSupport;
 import org.apache.activemq.wireformat.WireFormat;
@@ -46,6 +49,7 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
     private MQTTInactivityMonitor monitor;
     private MQTTWireFormat wireFormat;
     private final AtomicBoolean stopped = new AtomicBoolean();
+    private final BrokerContext context;
 
     private boolean trace;
     private final Object sendLock = new Object();
@@ -53,7 +57,7 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
     public MQTTTransportFilter(Transport next, WireFormat wireFormat, BrokerService brokerService) {
         super(next);
         this.protocolConverter = new MQTTProtocolConverter(this, brokerService);
-
+        this.context = brokerService.getBrokerContext();
         if (wireFormat instanceof MQTTWireFormat) {
             this.wireFormat = (MQTTWireFormat) wireFormat;
         }
@@ -200,5 +204,20 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
      */
     public void setActiveMQSubscriptionPrefetch(int activeMQSubscriptionPrefetch) {
         protocolConverter.setActiveMQSubscriptionPrefetch(activeMQSubscriptionPrefetch);
+    }
+    
+    public void setMessageConverter(String fqn) {
+    	LOG.debug("calling setMesssageConverter: fqn: {}",fqn);
+    	try {
+    		if (fqn == null || fqn.equals("default")) {
+    			LOG.info("calling setMesssageConverter: default converter");
+    			return;
+    		}
+    		MoatMessageConverter converter = (MoatMessageConverter) Class.forName(fqn).newInstance();
+    		converter.init(context);
+    		protocolConverter.setMoatMessageConverter(converter);
+    	} catch (Exception e) {
+    		LOG.error("Cought exception at setMessageConverter()",e);
+    	}
     }
 }

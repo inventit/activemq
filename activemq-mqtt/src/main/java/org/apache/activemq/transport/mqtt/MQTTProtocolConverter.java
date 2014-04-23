@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
+
 import javax.jms.Destination;
 import javax.jms.JMSException;
 import javax.jms.Message;
@@ -30,6 +31,8 @@ import javax.jms.Message;
 import org.apache.activemq.broker.BrokerService;
 import org.apache.activemq.command.*;
 import org.apache.activemq.store.PersistenceAdapterSupport;
+import org.apache.activemq.transport.mqtt.moat.DefaultMoatMessageConverter;
+import org.apache.activemq.transport.mqtt.moat.MoatMessageConverter;
 import org.apache.activemq.util.ByteArrayOutputStream;
 import org.apache.activemq.util.ByteSequence;
 import org.apache.activemq.util.IOExceptionSupport;
@@ -82,6 +85,7 @@ public class MQTTProtocolConverter {
     private final String QOS_PROPERTY_NAME = "QoSPropertyName";
     private final MQTTRetainedMessages retainedMessages;
     private final MQTTPacketIdGenerator packetIdGenerator;
+    private MoatMessageConverter moatConverter;
 
     public MQTTProtocolConverter(MQTTTransport mqttTransport, BrokerService brokerService) {
         this.mqttTransport = mqttTransport;
@@ -89,6 +93,11 @@ public class MQTTProtocolConverter {
         this.retainedMessages = MQTTRetainedMessages.getMQTTRetainedMessages(brokerService);
         this.packetIdGenerator = MQTTPacketIdGenerator.getMQTTPacketIdGenerator(brokerService);
         this.defaultKeepAlive = 0;
+        this.moatConverter = new DefaultMoatMessageConverter().init(brokerService.getBrokerContext());
+    }
+    
+    public void setMoatMessageConverter(MoatMessageConverter converter) {
+    	this.moatConverter = converter;
     }
 
     int generateCommandId() {
@@ -234,6 +243,7 @@ public class MQTTProtocolConverter {
         connectionInfo.setUserName(userName);
         connectionInfo.setPassword(passswd);
         connectionInfo.setTransportContext(mqttTransport.getPeerCertificates());
+        /*
 		if (clientId.startsWith("dev:") == false) {
 			Throwable exception = new SecurityException("Illegal Client type. clientId:"+clientId);
 			//let the client know
@@ -246,6 +256,7 @@ public class MQTTProtocolConverter {
 			getMQTTTransport().onException(IOExceptionSupport.create(exception));
 			return;
 		}
+		*/
 
         sendToActiveMQ(connectionInfo, new ResponseHandler() {
             @Override
@@ -601,7 +612,11 @@ public class MQTTProtocolConverter {
             }
         }
         msg.setJMSDestination(topic);
-        msg.writeBytes(command.payload().data, command.payload().offset, command.payload().length);
+        byte[] moatMessageSrc = new byte[command.payload().length];
+		System.arraycopy(command.payload().data, command.payload().offset,
+				moatMessageSrc, 0, command.payload().length);
+		byte[] amqMessage = moatConverter.convertFromMoatMessage(getClientId(), moatMessageSrc);
+        msg.writeBytes(amqMessage, 0, amqMessage.length);
         return msg;
     }
 
@@ -633,20 +648,26 @@ public class MQTTProtocolConverter {
             msg.setReadOnlyBody(true);
             String messageText = msg.getText();
             if (messageText != null) {
-                result.payload(new Buffer(messageText.getBytes("UTF-8")));
+            	byte[] amqMessage = messageText.getBytes("UTF-8");
+        		byte[] moatMessage = moatConverter.convertFromMoatMessage(getClientId(), amqMessage);
+                result.payload(new Buffer(moatMessage));
             }
         } else if (message.getDataStructureType() == ActiveMQBytesMessage.DATA_STRUCTURE_TYPE) {
             ActiveMQBytesMessage msg = (ActiveMQBytesMessage) message.copy();
             msg.setReadOnlyBody(true);
             byte[] data = new byte[(int) msg.getBodyLength()];
             msg.readBytes(data);
-            result.payload(new Buffer(data));
+            byte[] amqMessage = data;
+    		byte[] moatMessage = moatConverter.convertFromMoatMessage(getClientId(), amqMessage);
+            result.payload(new Buffer(moatMessage));
         } else if (message.getDataStructureType() == ActiveMQMapMessage.DATA_STRUCTURE_TYPE) {
             ActiveMQMapMessage msg = (ActiveMQMapMessage) message.copy();
             msg.setReadOnlyBody(true);
             Map<String, Object> map = msg.getContentMap();
             if (map != null) {
-                result.payload(new Buffer(map.toString().getBytes("UTF-8")));
+            	byte[] amqMessage = map.toString().getBytes("UTF-8");
+        		byte[] moatMessage = moatConverter.convertFromMoatMessage(getClientId(), amqMessage);
+                result.payload(new Buffer(moatMessage));
             }
         } else {
             ByteSequence byteSequence = message.getContent();
@@ -663,7 +684,11 @@ public class MQTTProtocolConverter {
                     byteSequence = bytesOut.toByteSequence();
                     bytesOut.close();
                 }
-                result.payload(new Buffer(byteSequence.data, byteSequence.offset, byteSequence.length));
+                byte[] amqMessageSrc = new byte[byteSequence.length];
+        		System.arraycopy(byteSequence.data, byteSequence.offset,
+        				amqMessageSrc, 0, byteSequence.length);
+        		byte[] moatMessage = moatConverter.convertFromMoatMessage(getClientId(), amqMessageSrc);
+                result.payload(new Buffer(moatMessage));
             }
         }
         return result;
