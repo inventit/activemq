@@ -206,18 +206,13 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
         protocolConverter.setActiveMQSubscriptionPrefetch(activeMQSubscriptionPrefetch);
     }
     
-    public void setMessageConverter(String fqn) {
-    	LOG.debug("calling setMesssageConverter: fqn: {}",fqn);
-    	try {
-    		if (fqn == null || fqn.equals("default")) {
-    			LOG.info("calling setMesssageConverter: default converter");
-    			return;
-    		}
-    		MoatMessageConverter converter = (MoatMessageConverter) Class.forName(fqn).newInstance();
-    		converter.init(context);
-    		protocolConverter.setMoatMessageConverter(converter);
-    	} catch (Exception e) {
-    		LOG.error("Cought exception at setMessageConverter()",e);
-    	}
+    public void setMoatContainerFormat(String containerFormat) {
+    	LOG.debug("calling setMoatContainerFormat: containerFormat: {}",containerFormat);
+    	protocolConverter.setMoatContainerFormat(containerFormat);
+    }
+    
+    public void setMoatDeviceOnly(String isDeviceOnly) {
+    	LOG.debug("calling setMoatDeviceOnly: isDeviceOnly: {}",isDeviceOnly);
+    	protocolConverter.setDeviceOnly(Boolean.parseBoolean(isDeviceOnly));
     }
 }
