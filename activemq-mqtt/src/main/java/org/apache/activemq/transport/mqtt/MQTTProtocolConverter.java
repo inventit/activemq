@@ -643,7 +643,7 @@ public class MQTTProtocolConverter {
         synchronized (mqttTopicMap) {
             topicName = mqttTopicMap.get(message.getJMSDestination());
             if (topicName == null) {
-                topicName = new UTF8Buffer(message.getDestination().getPhysicalName().replace('.', '/'));
+                topicName = new UTF8Buffer(convertMQTTToActiveMQ(message.getDestination().getPhysicalName()));
                 mqttTopicMap.put(message.getJMSDestination(), topicName);
             }
         }
