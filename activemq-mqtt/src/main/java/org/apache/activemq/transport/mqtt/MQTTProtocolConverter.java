@@ -31,6 +31,7 @@ import javax.jms.Message;
 import org.apache.activemq.broker.BrokerService;
 import org.apache.activemq.command.*;
 import org.apache.activemq.store.PersistenceAdapterSupport;
+import org.apache.activemq.transport.mqtt.moat.MoatAuthMode;
 import org.apache.activemq.transport.mqtt.moat.MoatConnectionInfo;
 import org.apache.activemq.util.ByteArrayOutputStream;
 import org.apache.activemq.util.ByteSequence;
@@ -85,8 +86,7 @@ public class MQTTProtocolConverter {
     private final MQTTRetainedMessages retainedMessages;
     private final MQTTPacketIdGenerator packetIdGenerator;
     private String containerFormat = "Raw";
-    private boolean isDeviceOnly;
-
+    private MoatAuthMode moatAuthMode = MoatAuthMode.getDefault();
     public MQTTProtocolConverter(MQTTTransport mqttTransport, BrokerService brokerService) {
         this.mqttTransport = mqttTransport;
         this.brokerService = brokerService;
@@ -99,8 +99,8 @@ public class MQTTProtocolConverter {
     	this.containerFormat = containerFormat;
     }
     
-    public void setDeviceOnly(boolean isDeviceOnly) {
-    	this.isDeviceOnly = isDeviceOnly;
+    public void setMoatAuthMode(MoatAuthMode authMode) {
+    	this.moatAuthMode = authMode;
     }
 
     int generateCommandId() {
@@ -250,18 +250,7 @@ public class MQTTProtocolConverter {
         connectionInfo.initMoatContainer(brokerService.getBrokerContext());
         connectionInfo.setPassword(passswd);
         connectionInfo.setTransportContext(mqttTransport.getPeerCertificates());
-		if (isDeviceOnly && clientId.startsWith("dev:") == false) {
-			Throwable exception = new SecurityException("Illegal Client type. clientId:"+clientId);
-			//let the client know
-			CONNACK ack = new CONNACK();
-			ack.code(CONNACK.Code.CONNECTION_REFUSED_NOT_AUTHORIZED);
-			try {
-				getMQTTTransport().sendToMQTT(ack.encode());
-			} catch (IOException e) {
-			}
-			getMQTTTransport().onException(IOExceptionSupport.create(exception));
-			return;
-		}
+        connectionInfo.setMoatAuthMode(moatAuthMode);
 
         sendToActiveMQ(connectionInfo, new ResponseHandler() {
             @Override

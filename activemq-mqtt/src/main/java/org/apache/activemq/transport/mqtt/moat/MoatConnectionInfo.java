@@ -17,6 +17,7 @@ public class MoatConnectionInfo extends ConnectionInfo {
 	private static final Logger LOG = LoggerFactory.getLogger(MoatConnectionInfo.class);
 	private String defaultMoatContainerType = "Raw";
 	private MoatContainer container = new RawContainer();
+	private MoatAuthMode moatAuthMode = MoatAuthMode.getDefault();
 	
 	public void initMoatContainer(BrokerContext context) {
 		LOG.debug("initMoatContainer: context: {}",context);
@@ -77,5 +78,13 @@ public class MoatConnectionInfo extends ConnectionInfo {
 	
 	public MoatContainer getMoatContainer() {
 		return container;
+	}
+	
+	public void setMoatAuthMode(MoatAuthMode mode) {
+		this.moatAuthMode = mode;
+	}
+	
+	public MoatAuthMode getMoatAuthMode() {
+		return moatAuthMode;
 	}
 }

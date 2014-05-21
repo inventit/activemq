@@ -28,6 +28,7 @@ import org.apache.activemq.command.Command;
 import org.apache.activemq.transport.Transport;
 import org.apache.activemq.transport.TransportFilter;
 import org.apache.activemq.transport.TransportListener;
+import org.apache.activemq.transport.mqtt.moat.MoatAuthMode;
 import org.apache.activemq.transport.mqtt.moat.MoatMessageConverter;
 import org.apache.activemq.transport.tcp.SslTransport;
 import org.apache.activemq.util.IOExceptionSupport;
@@ -211,8 +212,8 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
     	protocolConverter.setMoatContainerFormat(containerFormat);
     }
     
-    public void setMoatDeviceOnly(String isDeviceOnly) {
-    	LOG.debug("calling setMoatDeviceOnly: isDeviceOnly: {}",isDeviceOnly);
-    	protocolConverter.setDeviceOnly(Boolean.parseBoolean(isDeviceOnly));
+    public void setMoatAuthMode(String authMode) {
+    	LOG.debug("calling setMoatAuthMode: authMode: {}",authMode);
+    	protocolConverter.setMoatAuthMode(MoatAuthMode.fromName(authMode));
     }
 }
