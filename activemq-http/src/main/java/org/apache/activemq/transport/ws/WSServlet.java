@@ -52,7 +52,10 @@ public class WSServlet extends WebSocketServlet {
     public WebSocket doWebSocketConnect(HttpServletRequest request, String protocol) {
         WebSocket socket;
         if (protocol != null && protocol.startsWith("mqtt")) {
-            socket = new MQTTSocket();
+            MQTTSocket msocket = new MQTTSocket();
+            String containerFormat = this.getInitParameter("mqtt.moatContainerFormat");
+            msocket.setMoatContainerFormat(containerFormat);
+            socket = msocket;
         } else {
             socket = new StompSocket();
         }

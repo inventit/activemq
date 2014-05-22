@@ -45,6 +45,7 @@ public class MQTTSocket  extends TransportSupport implements WebSocket.OnBinaryM
     MQTTWireFormat wireFormat = new MQTTWireFormat();
     private final CountDownLatch socketTransportStarted = new CountDownLatch(1);
     private BrokerService brokerService;
+	private String containerFormat = "Raw";
 
     @Override
     public void onMessage(byte[] bytes, int offset, int length) {
@@ -68,6 +69,8 @@ public class MQTTSocket  extends TransportSupport implements WebSocket.OnBinaryM
     private MQTTProtocolConverter getProtocolConverter() {
         if( protocolConverter == null ) {
             protocolConverter = new MQTTProtocolConverter(this, brokerService);
+            LOG.info("MQTTSocket: containerFormat:"+containerFormat);
+            protocolConverter.setMoatContainerFormat(containerFormat);
         }
         return protocolConverter;
     }
@@ -146,5 +149,9 @@ public class MQTTSocket  extends TransportSupport implements WebSocket.OnBinaryM
     @Override
     public void setBrokerService(BrokerService brokerService) {
         this.brokerService = brokerService;
+    }
+    
+    public void setMoatContainerFormat(String containerFormat) {
+    	this.containerFormat  = containerFormat;
     }
 }

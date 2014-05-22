@@ -4,6 +4,7 @@ import io.inventit.ssdms.moat.messaging.activemq.plugins.messagecontainer.MoatCo
 import io.inventit.ssdms.moat.messaging.activemq.plugins.messagecontainer.RawContainer;
 
 import java.net.URISyntaxException;
+import java.util.HashMap;
 import java.util.Map;
 
 import org.apache.activemq.broker.BrokerContext;
@@ -29,7 +30,7 @@ public class MoatConnectionInfo extends ConnectionInfo {
 					Map<String, String> map = URISupport.parseQuery(getUserName());
 					String containerType = map.get("c");
 					if (containerType != null) {
-						LOG.debug("creating container type {}", defaultMoatContainerType);
+						LOG.info("creating container type {}", map);
 						setMoatContainer(context, containerType, map);
 						return;
 					}
@@ -39,7 +40,43 @@ public class MoatConnectionInfo extends ConnectionInfo {
 			}
 		}
 		LOG.debug("initMoatContainer: creating default: {}",defaultMoatContainerType);
-		setMoatContainer(context, defaultMoatContainerType, null);
+		applyDefaultContainerSetting(context, defaultMoatContainerType);
+	}
+	
+	private void applyDefaultContainerSetting(BrokerContext context, String param) {
+		String[] values = param.split(" ");
+		Map<String, String> map = new HashMap<String, String>();
+		LOG.debug("applyDefaultContainerSetting: values: {}",(Object)values);
+		if (values.length == 1) {
+			String containerFormat;
+			if (values[0].startsWith("c:")) {
+				containerFormat = values[0].substring("c:".length());
+			} else {
+				containerFormat = values[0];
+			}
+			LOG.debug("applyDefaultContainerSetting: c only: {}",containerFormat);
+			map.put("c", containerFormat);
+		} else {
+			for (String value: values) {
+				int p = value.indexOf(":");
+				if (p >= 0) {
+					String k = value.substring(0, p);
+					String v = value.substring(p+1);
+					map.put(k,v);
+				} else {
+					map.put(value, null);
+				}
+			}
+		}
+		
+		String containerType = map.get("c");
+		if (containerType != null) {
+			LOG.info("creating container type {}", map);
+			setMoatContainer(context, containerType, map);
+		} else {
+			LOG.error("Illegal default container format param: {}", param);
+			throw new  IllegalArgumentException("Illegal default container format param: "+param);
+		}
 	}
 	
 	private static final String CONTAINER_PACKAGE = "io.inventit.ssdms.moat.messaging.activemq.plugins.messagecontainer.";
@@ -48,7 +85,7 @@ public class MoatConnectionInfo extends ConnectionInfo {
 		String className = CONTAINER_PACKAGE + containerType+"Container";
 		try {
 			Class<?> klazz = null;
-			LOG.debug("creating moat container: className: {}", klazz);
+			LOG.debug("creating moat container: className: {}", className);
 			try {
 				klazz = Class.forName(className);
 			} catch (ClassNotFoundException e) {
@@ -58,9 +95,7 @@ public class MoatConnectionInfo extends ConnectionInfo {
 			}
 			
 			container = (MoatContainer)klazz.newInstance();
-			if (map != null) {
-				container.initContainer(context, map);
-			}
+			container.initContainer(context, map);
 			LOG.debug("created container: {}",container);
 		} catch (ClassNotFoundException e) {
 			LOG.warn("{} not found. Use default.",className);

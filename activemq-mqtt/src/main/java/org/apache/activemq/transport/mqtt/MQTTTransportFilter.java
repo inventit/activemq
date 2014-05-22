@@ -70,6 +70,7 @@ public class MQTTTransportFilter extends TransportFilter implements MQTTTranspor
             final Command command = (Command) o;
             protocolConverter.onActiveMQCommand(command);
         } catch (Exception e) {
+        	LOG.error("oneway: ", e);
             throw IOExceptionSupport.create(e);
         }
     }
