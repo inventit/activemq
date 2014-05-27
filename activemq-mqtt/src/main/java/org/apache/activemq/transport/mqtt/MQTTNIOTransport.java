@@ -36,12 +36,14 @@ import org.apache.activemq.util.IOExceptionSupport;
 import org.apache.activemq.util.ServiceStopper;
 import org.apache.activemq.wireformat.WireFormat;
 import org.fusesource.hawtbuf.DataByteArrayInputStream;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * An implementation of the {@link org.apache.activemq.transport.Transport} interface for using MQTT over NIO
  */
 public class MQTTNIOTransport extends TcpTransport {
-
+	private static final Logger LOG = LoggerFactory.getLogger(MQTTNIOTransport.class);
     private SocketChannel channel;
     private SelectorSelection selection;
 
@@ -71,6 +73,8 @@ public class MQTTNIOTransport extends TcpTransport {
                 if (error instanceof IOException) {
                     onException((IOException) error);
                 } else {
+                	LOG.error("Exception while SelectorManager.Listener()", error);
+                	// WARNING: This hides precise error info.
                     onException(IOExceptionSupport.create(error));
                 }
             }
@@ -112,6 +116,8 @@ public class MQTTNIOTransport extends TcpTransport {
         } catch (IOException e) {
             onException(e);
         } catch (Throwable e) {
+        	LOG.error("Exception while serviceRead()", e);
+        	// WARNING: This hides precise error info.
             onException(IOExceptionSupport.create(e));
         }
     }
