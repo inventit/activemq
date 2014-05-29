@@ -18,6 +18,7 @@
 package org.apache.activemq.transport.ws;
 
 import java.io.IOException;
+
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -54,7 +55,9 @@ public class WSServlet extends WebSocketServlet {
         if (protocol != null && protocol.startsWith("mqtt")) {
             MQTTSocket msocket = new MQTTSocket();
             String containerFormat = this.getInitParameter("mqtt.moatContainerFormat");
-            msocket.setMoatContainerFormat(containerFormat);
+            if (containerFormat != null && containerFormat.length() > 0) {
+            	msocket.setMoatContainerFormat(containerFormat);
+            }
             socket = msocket;
         } else {
             socket = new StompSocket();
