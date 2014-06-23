@@ -17,8 +17,11 @@
 package org.apache.activemq.transport.mqtt;
 
 import java.io.IOException;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.zip.DataFormatException;
@@ -29,6 +32,12 @@ import javax.jms.JMSException;
 import javax.jms.Message;
 
 import org.apache.activemq.broker.BrokerService;
+import org.apache.activemq.broker.ConnectionContext;
+import org.apache.activemq.broker.region.PrefetchSubscription;
+import org.apache.activemq.broker.region.RegionBroker;
+import org.apache.activemq.broker.region.Subscription;
+import org.apache.activemq.broker.region.TopicRegion;
+import org.apache.activemq.broker.region.policy.RetainedMessageSubscriptionRecoveryPolicy;
 import org.apache.activemq.command.*;
 import org.apache.activemq.store.PersistenceAdapterSupport;
 import org.apache.activemq.transport.mqtt.moat.MoatAuthMode;
@@ -68,6 +77,8 @@ public class MQTTProtocolConverter {
     private final ConcurrentHashMap<UTF8Buffer, MQTTSubscription> mqttSubscriptionByTopic = new ConcurrentHashMap<UTF8Buffer, MQTTSubscription>();
     private final Map<UTF8Buffer, ActiveMQTopic> activeMQTopicMap = new LRUCache<UTF8Buffer, ActiveMQTopic>(DEFAULT_CACHE_SIZE);
     private final Map<Destination, UTF8Buffer> mqttTopicMap = new LRUCache<Destination, UTF8Buffer>(DEFAULT_CACHE_SIZE);
+    private final Set<String> restoredSubs = Collections.synchronizedSet(new HashSet<String>());
+
     private final Map<Short, MessageAck> consumerAcks = new LRUCache<Short, MessageAck>(DEFAULT_CACHE_SIZE);
     private final Map<Short, PUBREC> publisherRecs = new LRUCache<Short, PUBREC>(DEFAULT_CACHE_SIZE);
 
@@ -82,15 +93,13 @@ public class MQTTProtocolConverter {
     private String clientId;
     private long defaultKeepAlive;
     private int activeMQSubscriptionPrefetch=1;
-    private final String QOS_PROPERTY_NAME = "QoSPropertyName";
-    private final MQTTRetainedMessages retainedMessages;
+    protected static final String QOS_PROPERTY_NAME = "ActiveMQ.MQTT.QoS";
     private final MQTTPacketIdGenerator packetIdGenerator;
     private String containerFormat = "Raw";
     private MoatAuthMode moatAuthMode = MoatAuthMode.getDefault();
     public MQTTProtocolConverter(MQTTTransport mqttTransport, BrokerService brokerService) {
         this.mqttTransport = mqttTransport;
         this.brokerService = brokerService;
-        this.retainedMessages = MQTTRetainedMessages.getMQTTRetainedMessages(brokerService);
         this.packetIdGenerator = MQTTPacketIdGenerator.getMQTTPacketIdGenerator(brokerService);
         this.defaultKeepAlive = 0;
     }
@@ -338,6 +347,8 @@ public class MQTTProtocolConverter {
                 String[] split = name.split(":", 2);
                 QoS qoS = QoS.valueOf(split[0]);
                 onSubscribe(new Topic(split[1], qoS));
+                // mark this durable subscription as restored by Broker
+                restoredSubs.add(split[1]);
             }
         } catch (IOException e) {
             LOG.warn("Could not restore the MQTT durable subs.", e);
@@ -369,36 +380,6 @@ public class MQTTProtocolConverter {
             } catch (IOException e) {
                 LOG.warn("Couldn't send SUBACK for " + command, e);
             }
-            // check retained messages
-            for (int i = 0; i < topics.length; i++) {
-                if (qos[i] == SUBSCRIBE_ERROR) {
-                    // skip this topic if subscribe failed
-                    continue;
-                }
-                final Topic topic = topics[i];
-                ActiveMQTopic destination = new ActiveMQTopic(convertMQTTToActiveMQ(topic.name().toString()));
-                for (PUBLISH msg : retainedMessages.getMessages(destination)) {
-                    if( msg.payload().length > 0 ) {
-                        try {
-                            PUBLISH retainedCopy = new PUBLISH();
-                            retainedCopy.topicName(msg.topicName());
-                            retainedCopy.retain(msg.retain());
-                            retainedCopy.payload(msg.payload());
-                            // set QoS of retained message to maximum of subscription QoS
-                            retainedCopy.qos(msg.qos().ordinal() > qos[i] ? QoS.values()[qos[i]] : msg.qos());
-                            switch (retainedCopy.qos()) {
-                                case AT_LEAST_ONCE:
-                                case EXACTLY_ONCE:
-                                    retainedCopy.messageId(packetIdGenerator.getNextSequenceId(getClientId()));
-                                case AT_MOST_ONCE:
-                            }
-                            getMQTTTransport().sendToMQTT(retainedCopy.encode());
-                        } catch (IOException e) {
-                            LOG.warn("Couldn't send retained message " + msg, e);
-                        }
-                    }
-                }
-            }
         } else {
             LOG.warn("No topics defined for Subscription " + command);
         }
@@ -407,28 +388,39 @@ public class MQTTProtocolConverter {
 
     byte onSubscribe(final Topic topic) throws MQTTProtocolException {
 
-        if( mqttSubscriptionByTopic.containsKey(topic.name())) {
-            if (topic.qos() != mqttSubscriptionByTopic.get(topic.name()).qos()) {
-                // remove old subscription as the QoS has changed
-                onUnSubscribe(topic.name());
-            } else {
-                // duplicate SUBSCRIBE packet, nothing to do
-                return (byte) topic.qos().ordinal();
-            }
-        }
+        final UTF8Buffer topicName = topic.name();
+        final QoS topicQoS = topic.qos();
+        ActiveMQDestination destination = new ActiveMQTopic(convertMQTTToActiveMQ(topicName.toString()));
 
-        ActiveMQDestination destination = new ActiveMQTopic(convertMQTTToActiveMQ(topic.name().toString()));
+        if( mqttSubscriptionByTopic.containsKey(topicName)) {
+            final MQTTSubscription mqttSubscription = mqttSubscriptionByTopic.get(topicName);
+            if (topicQoS != mqttSubscription.qos()) {
+                // remove old subscription as the QoS has changed
+                onUnSubscribe(topicName);
+            } else {
+                // duplicate SUBSCRIBE packet, find all matching topics and resend retained messages
+                resendRetainedMessages(topicName, destination, mqttSubscription);
+
+                return (byte) topicQoS.ordinal();
+            }
+            onUnSubscribe(topicName);
+        }
 
         ConsumerId id = new ConsumerId(sessionId, consumerIdGenerator.getNextSequenceId());
         ConsumerInfo consumerInfo = new ConsumerInfo(id);
         consumerInfo.setDestination(destination);
         consumerInfo.setPrefetchSize(getActiveMQSubscriptionPrefetch());
+        consumerInfo.setRetroactive(true);
         consumerInfo.setDispatchAsync(true);
         // create durable subscriptions only when cleansession is false
-        if ( !connect.cleanSession() && connect.clientId() != null && topic.qos().ordinal() >= QoS.AT_LEAST_ONCE.ordinal() ) {
-            consumerInfo.setSubscriptionName(topic.qos()+":"+topic.name().toString());
+        if ( !connect.cleanSession() && connect.clientId() != null && topicQoS.ordinal() >= QoS.AT_LEAST_ONCE.ordinal() ) {
+            consumerInfo.setSubscriptionName(topicQoS + ":" + topicName.toString());
         }
-        MQTTSubscription mqttSubscription = new MQTTSubscription(this, topic.qos(), consumerInfo);
+        MQTTSubscription mqttSubscription = new MQTTSubscription(this, topicQoS, consumerInfo);
+
+        // optimistic add to local maps first to be able to handle commands in onActiveMQCommand
+        subscriptionsByConsumerId.put(id, mqttSubscription);
+        mqttSubscriptionByTopic.put(topicName, mqttSubscription);
 
         final byte[] qos = {-1};
         sendToActiveMQ(consumerInfo, new ResponseHandler() {
@@ -437,20 +429,69 @@ public class MQTTProtocolConverter {
                 // validate subscription request
                 if (response.isException()) {
                     final Throwable throwable = ((ExceptionResponse) response).getException();
-                    LOG.warn("Error subscribing to " + topic.name(), throwable);
+                    LOG.warn("Error subscribing to " + topicName, throwable);
                     qos[0] = SUBSCRIBE_ERROR;
                 } else {
-                    qos[0] = (byte) topic.qos().ordinal();
+                    qos[0] = (byte) topicQoS.ordinal();
                 }
             }
         });
 
-        if (qos[0] != SUBSCRIBE_ERROR) {
-            subscriptionsByConsumerId.put(id, mqttSubscription);
-            mqttSubscriptionByTopic.put(topic.name(), mqttSubscription);
+        if (qos[0] == SUBSCRIBE_ERROR) {
+            // remove from local maps if subscribe failed
+            subscriptionsByConsumerId.remove(id);
+            mqttSubscriptionByTopic.remove(topicName);
         }
 
         return qos[0];
+    }
+
+    private void resendRetainedMessages(UTF8Buffer topicName, ActiveMQDestination destination,
+                                        MQTTSubscription mqttSubscription) throws MQTTProtocolException {
+        // check whether the Topic has been recovered in restoreDurableSubs
+        // mark subscription available for recovery for duplicate subscription
+        if (restoredSubs.remove(destination.getPhysicalName())) {
+            return;
+        }
+
+        // get TopicRegion
+        RegionBroker regionBroker;
+        try {
+            regionBroker = (RegionBroker) brokerService.getBroker().getAdaptor(RegionBroker.class);
+        } catch (Exception e) {
+            throw new MQTTProtocolException("Error subscribing to " + topicName + ": " + e.getMessage(), false, e);
+        }
+        final TopicRegion topicRegion = (TopicRegion) regionBroker.getTopicRegion();
+
+        final ConsumerInfo consumerInfo = mqttSubscription.getConsumerInfo();
+        final ConsumerId consumerId = consumerInfo.getConsumerId();
+
+        // use actual client id used to create connection to lookup connection context
+        final String connectionInfoClientId = connectionInfo.getClientId();
+        final ConnectionContext connectionContext = regionBroker.getConnectionContext(connectionInfoClientId);
+
+        // get all matching Topics
+        final Set<org.apache.activemq.broker.region.Destination> matchingDestinations = topicRegion.getDestinations(destination);
+        for (org.apache.activemq.broker.region.Destination dest : matchingDestinations) {
+
+            // recover retroactive messages for matching subscription
+            for (Subscription subscription : dest.getConsumers()) {
+                if (subscription.getConsumerInfo().getConsumerId().equals(consumerId)) {
+                    try {
+                        ((org.apache.activemq.broker.region.Topic)dest).recoverRetroactiveMessages(connectionContext, subscription);
+                        if (subscription instanceof PrefetchSubscription) {
+                            // request dispatch for prefetch subs
+                            PrefetchSubscription prefetchSubscription = (PrefetchSubscription) subscription;
+                            prefetchSubscription.dispatchPending();
+                        }
+                    } catch (Exception e) {
+                        throw new MQTTProtocolException("Error recovering retained messages for " +
+                            dest.getName() + ": " + e.getMessage(), false, e);
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     void onUnSubscribe(UNSUBSCRIBE command) throws MQTTProtocolException {
@@ -478,11 +519,23 @@ public class MQTTProtocolConverter {
                 removeInfo = info.createRemoveCommand();
             }
             sendToActiveMQ(removeInfo, null);
+
+            // check if the durable sub also needs to be removed
+            if (subs.getConsumerInfo().getSubscriptionName() != null) {
+                // also remove it from restored durable subscriptions set
+                restoredSubs.remove(convertMQTTToActiveMQ(topicName.toString()));
+
+                RemoveSubscriptionInfo rsi = new RemoveSubscriptionInfo();
+                rsi.setConnectionId(connectionId);
+                rsi.setSubscriptionName(subs.getConsumerInfo().getSubscriptionName());
+                rsi.setClientId(connectionInfo.getClientId());
+                sendToActiveMQ(rsi, null);
+            }
         }
     }
 
     /**
-     * Dispatch a ActiveMQ command
+     * Dispatch an ActiveMQ command
      */
     public void onActiveMQCommand(Command command) throws Exception {
         if (command.isResponse()) {
@@ -533,9 +586,6 @@ public class MQTTProtocolConverter {
     void onMQTTPublish(PUBLISH command) throws IOException, JMSException {
         checkConnected();
         ActiveMQMessage message = convertMessage(command);
-        if (command.retain()){
-            retainedMessages.addMessage((ActiveMQTopic) message.getDestination(), command);
-        }
         message.setProducerId(producerId);
         message.onSend();
         sendToActiveMQ(message, createResponseHandler(command));
@@ -595,6 +645,9 @@ public class MQTTProtocolConverter {
         msg.setPriority((byte) Message.DEFAULT_PRIORITY);
         msg.setPersistent(command.qos() != QoS.AT_MOST_ONCE && !command.retain());
         msg.setIntProperty(QOS_PROPERTY_NAME, command.qos().ordinal());
+        if (command.retain()) {
+            msg.setBooleanProperty(RetainedMessageSubscriptionRecoveryPolicy.RETAIN_PROPERTY, true);
+        }
 
         ActiveMQTopic topic;
         synchronized (activeMQTopicMap) {
@@ -627,6 +680,9 @@ public class MQTTProtocolConverter {
             qoS = message.isPersistent() ? QoS.AT_MOST_ONCE : QoS.AT_LEAST_ONCE;
         }
         result.qos(qoS);
+        if (message.getBooleanProperty(RetainedMessageSubscriptionRecoveryPolicy.RETAINED_PROPERTY)) {
+            result.retain(true);
+        }
 
         UTF8Buffer topicName;
         synchronized (mqttTopicMap) {
@@ -690,6 +746,10 @@ public class MQTTProtocolConverter {
             }
         }
         return result;
+    }
+
+    private String convertActiveMQToMQTT(String physicalName) {
+        return physicalName.replace('.', '/');
     }
 
     public MQTTTransport getMQTTTransport() {

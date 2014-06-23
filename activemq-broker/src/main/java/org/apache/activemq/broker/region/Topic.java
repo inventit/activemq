@@ -33,7 +33,7 @@ import org.apache.activemq.broker.ConnectionContext;
 import org.apache.activemq.broker.ProducerBrokerExchange;
 import org.apache.activemq.broker.region.policy.DispatchPolicy;
 import org.apache.activemq.broker.region.policy.LastImageSubscriptionRecoveryPolicy;
-import org.apache.activemq.broker.region.policy.NoSubscriptionRecoveryPolicy;
+import org.apache.activemq.broker.region.policy.RetainedMessageSubscriptionRecoveryPolicy;
 import org.apache.activemq.broker.region.policy.SimpleDispatchPolicy;
 import org.apache.activemq.broker.region.policy.SubscriptionRecoveryPolicy;
 import org.apache.activemq.broker.util.InsertionCountList;
@@ -91,7 +91,7 @@ public class Topic extends BaseDestination implements Task {
             subscriptionRecoveryPolicy = new LastImageSubscriptionRecoveryPolicy();
             setAlwaysRetroactive(true);
         } else {
-            subscriptionRecoveryPolicy = new NoSubscriptionRecoveryPolicy();
+            subscriptionRecoveryPolicy = new RetainedMessageSubscriptionRecoveryPolicy(null);
         }
         this.taskRunner = taskFactory.createTaskRunner(this, "Topic  " + destination.getPhysicalName());
     }
@@ -305,7 +305,7 @@ public class Topic extends BaseDestination implements Task {
         sub.remove(context, this, dispatched);
     }
 
-    protected void recoverRetroactiveMessages(ConnectionContext context, Subscription subscription) throws Exception {
+    public void recoverRetroactiveMessages(ConnectionContext context, Subscription subscription) throws Exception {
         if (subscription.getConsumerInfo().isRetroactive()) {
             subscriptionRecoveryPolicy.recover(context, this, subscription);
         }
@@ -498,6 +498,11 @@ public class Topic extends BaseDestination implements Task {
                         message.decrementReferenceCount();
                     }
                 }
+
+                @Override
+                public void afterRollback() throws Exception {
+                    message.decrementReferenceCount();
+                }
             });
 
         } else {
@@ -670,8 +675,14 @@ public class Topic extends BaseDestination implements Task {
         return subscriptionRecoveryPolicy;
     }
 
-    public void setSubscriptionRecoveryPolicy(SubscriptionRecoveryPolicy subscriptionRecoveryPolicy) {
-        this.subscriptionRecoveryPolicy = subscriptionRecoveryPolicy;
+    public void setSubscriptionRecoveryPolicy(SubscriptionRecoveryPolicy recoveryPolicy) {
+        if (this.subscriptionRecoveryPolicy != null && this.subscriptionRecoveryPolicy instanceof RetainedMessageSubscriptionRecoveryPolicy) {
+            // allow users to combine retained message policy with other ActiveMQ policies
+            RetainedMessageSubscriptionRecoveryPolicy policy = (RetainedMessageSubscriptionRecoveryPolicy) this.subscriptionRecoveryPolicy;
+            policy.setWrapped(recoveryPolicy);
+        } else {
+            this.subscriptionRecoveryPolicy = recoveryPolicy;
+        }
     }
 
     // Implementation methods

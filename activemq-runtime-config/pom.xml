@@ -22,7 +22,7 @@
   <parent>
     <groupId>org.apache.activemq</groupId>
     <artifactId>activemq-parent</artifactId>
-    <version>5.10-SNAPSHOT-3adffc1-1.4</version>
+    <version>5.10-1.4</version>
   </parent>
 
   <artifactId>activemq-runtime-config</artifactId>
@@ -99,6 +99,27 @@
 
   <build>
     <plugins>
+      <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>properties-maven-plugin</artifactId>
+          <version>1.0-alpha-2</version>
+          <executions>
+              <execution>
+                  <phase>initialize</phase>
+                  <goals>
+                      <goal>set-system-properties</goal>
+                  </goals>
+                  <configuration>
+                      <properties>
+                          <property>
+                              <name>javax.xml.accessExternalSchema</name>
+                              <value>file</value>
+                          </property>
+                      </properties>
+                  </configuration>
+              </execution>
+          </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-dependency-plugin</artifactId>

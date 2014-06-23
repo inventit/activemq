@@ -22,7 +22,7 @@
   <parent>
     <groupId>org.apache.activemq</groupId>
     <artifactId>activemq-parent</artifactId>
-    <version>5.10-SNAPSHOT-3adffc1-1.4</version>
+    <version>5.10-1.4</version>
   </parent>
 
   <artifactId>activemq-leveldb-store</artifactId>
@@ -59,7 +59,7 @@
     </dependency>
     <dependency>
       <groupId>org.fusesource.hawtdispatch</groupId>
-      <artifactId>hawtdispatch-scala</artifactId>
+      <artifactId>hawtdispatch-scala-2.11</artifactId>
       <version>${hawtdispatch-version}</version>
     </dependency>
     <dependency>
@@ -319,7 +319,7 @@
     </dependency>
     <dependency>
       <groupId>org.scalatest</groupId>
-      <artifactId>scalatest_${scala-version}</artifactId>
+      <artifactId>scalatest_2.11</artifactId>
       <version>${scalatest-version}</version>
       <scope>test</scope>
     </dependency>
