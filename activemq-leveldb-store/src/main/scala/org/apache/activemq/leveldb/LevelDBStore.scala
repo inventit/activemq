@@ -25,7 +25,7 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent._
 import java.util.concurrent.atomic.AtomicLong
-import reflect.BeanProperty
+import beans.BeanProperty
 import org.apache.activemq.store._
 import java.util._
 import collection.mutable.ListBuffer
@@ -47,8 +47,7 @@ object LevelDBStore extends Log {
       }
   })
 
-  val DONE = new CountDownFuture[AnyRef]();
-  DONE.set(null)
+  val DONE = new InlineListenableFuture;
 
   def toIOException(e: Throwable): IOException = {
     if (e.isInstanceOf[ExecutionException]) {
@@ -681,7 +680,7 @@ class LevelDBStore extends LockableServiceSupport with BrokerServiceAware with P
     }
 
     override def asyncAddQueueMessage(context: ConnectionContext, message: Message) = asyncAddQueueMessage(context, message, false)
-    override def asyncAddQueueMessage(context: ConnectionContext, message: Message, delay: Boolean): Future[AnyRef] = {
+    override def asyncAddQueueMessage(context: ConnectionContext, message: Message, delay: Boolean): ListenableFuture[AnyRef] = {
       check_running
       message.getMessageId.setEntryLocator(null)
       if(  message.getTransactionId!=null ) {
@@ -800,7 +799,7 @@ class LevelDBStore extends LockableServiceSupport with BrokerServiceAware with P
 
     def subscription_with_key(key:Long) = subscriptions.find(_._2.subKey == key).map(_._2)
 
-    override def asyncAddQueueMessage(context: ConnectionContext, message: Message, delay: Boolean): Future[AnyRef] = {
+    override def asyncAddQueueMessage(context: ConnectionContext, message: Message, delay: Boolean): ListenableFuture[AnyRef] = {
       super.asyncAddQueueMessage(context, message, false)
     }
 

@@ -25,7 +25,7 @@
 
   <groupId>org.apache.activemq</groupId>
   <artifactId>activemq-parent</artifactId>
-  <version>5.10-SNAPSHOT-3adffc1-1.4</version>
+  <version>5.10-1.5</version>
   <packaging>pom</packaging>
   <name>ActiveMQ</name>
   <inceptionYear>2005</inceptionYear>
@@ -46,7 +46,7 @@
     <aopalliance-version>1.0</aopalliance-version>
     <aries-version>1.0.0</aries-version>
     <axion-version>1.0-M3-dev</axion-version>
-    <camel-version>2.13.0</camel-version>
+    <camel-version>2.13.1</camel-version>
     <camel-version-range>[2.12,3)</camel-version-range>
     <cglib-version>2.2</cglib-version>
     <commons-beanutils-version>1.8.3</commons-beanutils-version>
@@ -64,7 +64,7 @@
     <geronimo-version>1.0</geronimo-version>
     <hadoop-version>1.0.0</hadoop-version>
     <hawtbuf-version>1.10</hawtbuf-version>
-    <hawtdispatch-version>1.20</hawtdispatch-version>
+    <hawtdispatch-version>1.21</hawtdispatch-version>
     <howl-version>0.1.8</howl-version>
     <hsqldb-version>1.8.0.12</hsqldb-version>
     <httpclient-version>4.2.5</httpclient-version>
@@ -80,7 +80,7 @@
     <jstl-version>1.1.2</jstl-version>
     <jettison-version>1.3.5</jettison-version>
     <jmock-version>2.5.1</jmock-version>
-    <jolokia-version>1.2.0</jolokia-version>
+    <jolokia-version>1.2.1</jolokia-version>
     <josql-version>1.5_5</josql-version>
     <!-- for json-simple use same version as jolokia uses -->
     <json-simple-version>1.1</json-simple-version>
@@ -100,17 +100,16 @@
     <paho-version>0.4.0</paho-version>
     <linkedin-zookeeper-version>1.4.0</linkedin-zookeeper-version>
     <zookeeper-version>3.4.5</zookeeper-version>
-    <qpid-proton-version>0.6</qpid-proton-version>
+    <qpid-proton-version>0.7</qpid-proton-version>
     <qpid-jms-version>0.26</qpid-jms-version>
     <regexp-version>1.3</regexp-version>
     <rome-version>1.0</rome-version>
     <saxon-version>9.5.1-2</saxon-version>
     <saxon-bundle-version>9.5.1-1_1</saxon-bundle-version>
     <scala-plugin-version>3.1.0</scala-plugin-version>
-    <scala-version>2.9.1</scala-version>
-    <scala-bundle-version>2.9.1_3</scala-bundle-version>
+    <scala-version>2.11.0</scala-version>
     <shiro-version>1.2.2</shiro-version>
-    <scalatest-version>1.8</scalatest-version>
+    <scalatest-version>2.1.5</scalatest-version>
     <slf4j-version>1.7.5</slf4j-version>
     <snappy-version>1.1.0.1</snappy-version>
     <spring-version>3.2.8.RELEASE</spring-version>
@@ -268,8 +267,8 @@
     <connection>scm:git:http://git-wip-us.apache.org/repos/asf/activemq.git</connection>
     <developerConnection>scm:git:https://git-wip-us.apache.org/repos/asf/activemq.git</developerConnection>
     <url>https://fisheye6.atlassian.com/browse/~br=master/activemq-git</url>
-    <tag>activemq-5.10-SNAPSHOT-3adffc1-1.0</tag>
-  </scm>
+    <tag>activemq-5.10-1.4</tag>
+   </scm>
 
   <dependencyManagement>
     <dependencies>
@@ -676,7 +675,7 @@
         <artifactId>openjpa-persistence-jdbc</artifactId>
         <version>${openjpa-version}</version>
       </dependency>
-      
+
       <!-- Optional Shiro Support -->
       <dependency>
         <groupId>org.apache.shiro</groupId>
@@ -1124,7 +1123,21 @@
             <allowTimestampedSnapshots>false</allowTimestampedSnapshots>
             <preparationGoals>clean install</preparationGoals>
             <goals>deploy</goals>
+            <remoteTagging>false</remoteTagging>
+            <suppressCommitBeforeTag>false</suppressCommitBeforeTag>
           </configuration>
+          <dependencies>
+            <dependency>
+             <groupId>org.apache.maven.scm</groupId>
+             <artifactId>maven-scm-api</artifactId>
+             <version>1.8.1</version>
+            </dependency>
+          <dependency>
+             <groupId>org.apache.maven.scm</groupId>
+             <artifactId>maven-scm-provider-gitexe</artifactId>
+             <version>1.8.1</version>
+           </dependency>
+         </dependencies>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -1375,7 +1388,9 @@
             <!-- web, web-console, web-demo files -->
             <exclude>**/webapp/mqtt/mqttws31.js</exclude>
             <exclude>**/webapp/js/dojo.js</exclude>
-            <exclude>**/webapp/js/jquery-*.js</exclude>
+            <exclude>**/jquery-*.js</exclude>
+            <exclude>**/bootstrap.min.css</exclude>
+            <exclude>**/bootstrap.min.responsive.css</exclude>
             <exclude>**/webapp/js/prototype.js</exclude>
             <exclude>**/web/behaviour.js</exclude>
             <exclude>**/webapp/js/common.js</exclude>
@@ -1397,6 +1412,15 @@
             <exclude>**/*.iws</exclude>
             <exclude>**/.idea/**/*</exclude>
             <exclude>.git/**/*</exclude>
+            <exclude>**/LevelDB/**/*</exclude>
+            <exclude>**/dependency-reduced-pom.xml</exclude>
+            <exclude>**/*.sln</exclude>
+            <exclude>**/*.userprefs</exclude>
+            <exclude>**/*.csproj</exclude>
+            <exclude>**/mqttws31.js</exclude>
+            <exclude>**/stomp.js</exclude>
+            <exclude>**/__init__.py</exclude>
+            <exclude>**/webapp/decorators/footer.jsp</exclude>
           </excludes>
         </configuration>
       </plugin>

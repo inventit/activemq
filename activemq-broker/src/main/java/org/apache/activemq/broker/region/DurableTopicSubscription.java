@@ -23,7 +23,6 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-
 import javax.jms.InvalidSelectorException;
 import javax.jms.JMSException;
 
@@ -120,9 +119,6 @@ public class DurableTopicSubscription extends PrefetchSubscription implements Us
         if (active.get() || keepDurableSubsActive) {
             Topic topic = (Topic) destination;
             topic.activate(context, this);
-            if (pending.isEmpty(topic)) {
-                topic.recoverRetroactiveMessages(context, this);
-            }
             this.enqueueCounter += pending.size();
         } else if (destination.getMessageStore() != null) {
             TopicMessageStore store = (TopicMessageStore) destination.getMessageStore();
@@ -135,6 +131,11 @@ public class DurableTopicSubscription extends PrefetchSubscription implements Us
             }
         }
         dispatchPending();
+    }
+
+    // used by RetaineMessageSubscriptionRecoveryPolicy
+    public boolean isEmpty(Topic topic) {
+        return pending.isEmpty(topic);
     }
 
     public void activate(SystemUsage memoryManager, ConnectionContext context, ConsumerInfo info, RegionBroker regionBroker) throws Exception {
@@ -167,13 +168,12 @@ public class DurableTopicSubscription extends PrefetchSubscription implements Us
                     pending.setMaxAuditDepth(getMaxAuditDepth());
                     pending.setMaxProducersToAudit(getMaxProducersToAudit());
                     pending.start();
-                    // If nothing was in the persistent store, then try to use the
-                    // recovery policy.
-                    if (pending.isEmpty()) {
-                        for (Destination destination : durableDestinations.values()) {
-                            Topic topic = (Topic) destination;
-                            topic.recoverRetroactiveMessages(context, this);
-                        }
+                }
+                // use recovery policy every time sub is activated for retroactive topics and consumers
+                for (Destination destination : durableDestinations.values()) {
+                    Topic topic = (Topic) destination;
+                    if (topic.isAlwaysRetroactive() || info.isRetroactive()) {
+                        topic.recoverRetroactiveMessages(context, this);
                     }
                 }
             }
@@ -273,7 +273,7 @@ public class DurableTopicSubscription extends PrefetchSubscription implements Us
     }
 
     @Override
-    protected void dispatchPending() throws IOException {
+    public void dispatchPending() throws IOException {
         if (isActive()) {
             super.dispatchPending();
         }

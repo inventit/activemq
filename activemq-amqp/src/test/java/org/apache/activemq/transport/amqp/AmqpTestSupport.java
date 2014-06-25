@@ -47,10 +47,14 @@ import org.apache.activemq.broker.jmx.QueueViewMBean;
 import org.apache.activemq.spring.SpringSslContext;
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Rule;
+import org.junit.rules.TestName;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 public class AmqpTestSupport {
+
+    @Rule public TestName name = new TestName();
 
     protected static final Logger LOG = LoggerFactory.getLogger(AmqpTestSupport.class);
     protected BrokerService brokerService;
@@ -60,6 +64,7 @@ public class AmqpTestSupport {
     protected int sslPort;
     protected int nioPort;
     protected int nioPlusSslPort;
+    protected int openwirePort;
 
     public static void main(String[] args) throws Exception {
         final AmqpTestSupport s = new AmqpTestSupport();
@@ -119,26 +124,40 @@ public class AmqpTestSupport {
     protected void addAMQPConnector() throws Exception {
         TransportConnector connector = null;
 
+        if (isUseOpenWireConnector()) {
+            connector = brokerService.addConnector(
+                "tcp://0.0.0.0:" + openwirePort);
+            openwirePort = connector.getConnectUri().getPort();
+            LOG.debug("Using openwire port " + openwirePort);
+        }
         if (isUseTcpConnector()) {
-            connector = brokerService.addConnector("amqp://0.0.0.0:" + port);
+            connector = brokerService.addConnector(
+                "amqp://0.0.0.0:" + port + "?transport.transformer=" + getAmqpTransformer());
             port = connector.getConnectUri().getPort();
             LOG.debug("Using amqp port " + port);
         }
         if (isUseSslConnector()) {
-            connector = brokerService.addConnector("amqp+ssl://0.0.0.0:" + sslPort);
+            connector = brokerService.addConnector(
+                "amqp+ssl://0.0.0.0:" + sslPort + "?transport.transformer=" + getAmqpTransformer());
             sslPort = connector.getConnectUri().getPort();
             LOG.debug("Using amqp+ssl port " + sslPort);
         }
         if (isUseNioConnector()) {
-            connector = brokerService.addConnector("amqp+nio://0.0.0.0:" + nioPort);
+            connector = brokerService.addConnector(
+                "amqp+nio://0.0.0.0:" + nioPort + "?transport.transformer=" + getAmqpTransformer());
             nioPort = connector.getConnectUri().getPort();
             LOG.debug("Using amqp+nio port " + nioPort);
         }
         if (isUseNioPlusSslConnector()) {
-            connector = brokerService.addConnector("amqp+nio+ssl://0.0.0.0:" + nioPlusSslPort);
+            connector = brokerService.addConnector(
+                "amqp+nio+ssl://0.0.0.0:" + nioPlusSslPort + "?transport.transformer=" + getAmqpTransformer());
             nioPlusSslPort = connector.getConnectUri().getPort();
             LOG.debug("Using amqp+nio+ssl port " + nioPlusSslPort);
         }
+    }
+
+    protected boolean isUseOpenWireConnector() {
+        return false;
     }
 
     protected boolean isUseTcpConnector() {
@@ -155,6 +174,10 @@ public class AmqpTestSupport {
 
     protected boolean isUseNioPlusSslConnector() {
         return false;
+    }
+
+    protected String getAmqpTransformer() {
+        return "jms";
     }
 
     public void startBroker() throws Exception {
